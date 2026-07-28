@@ -4,8 +4,8 @@
 (function () {
   'use strict';
   (function(){ var o=document.getElementById('loadingOverlay'); if(o) o.style.display='none'; })();
-  // On first visit (no saved log), seed localStorage from the pre-built CSV export.
-  (function(){ try { if(!localStorage.getItem('ionospherePanel.parcelLog.v2') && typeof SEED_LOG!=='undefined') localStorage.setItem('ionospherePanel.parcelLog.v2', JSON.stringify(SEED_LOG)); } catch(e){} })();
+  // Seed localStorage from the pre-built CSV export when no log rows exist yet.
+  (function(){ try { var s=localStorage.getItem('ionospherePanel.parcelLog.v2'); if((!s||s==='[]') && typeof SEED_LOG!=='undefined') localStorage.setItem('ionospherePanel.parcelLog.v2',JSON.stringify(SEED_LOG)); } catch(e){} })();
 
   const SNAPS = IONO_DATA.snapshots;
   const NS = 'http://www.w3.org/2000/svg';
