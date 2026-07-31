@@ -123,6 +123,7 @@
   const parcelCountEl = document.getElementById('parcelCount');
   const mapChips = document.getElementById('mapChips');
   const profileChips = document.getElementById('profileChips');
+  const omniSvg = document.getElementById('omniSvg');
   const mapSvg = document.getElementById('mapSvg');
   const legendSvg = document.getElementById('legendSvg');
   const profileTrack = document.getElementById('profileTrack');
@@ -164,6 +165,158 @@
       });
       container.appendChild(chip);
     }
+  }
+
+  // ---------- omni panel (Step 0) ----------
+
+  // snapshot tags are "MMDD_HHMM" and every snapshot falls in 2024 (see
+  // extract_data.py); parse that back into a UTC epoch ms so it can be
+  // compared against OMNI_DATA's own UTC epoch ms timestamps
+  function snapTimeMs(snap) {
+    const month = parseInt(snap.tag.slice(0, 2), 10);
+    const day = parseInt(snap.tag.slice(2, 4), 10);
+    const hour = parseInt(snap.tag.slice(5, 7), 10);
+    const minute = parseInt(snap.tag.slice(7, 9), 10);
+    return Date.UTC(2024, month - 1, day, hour, minute, 0);
+  }
+
+  // round-hour ticks at a fixed step (e.g. every 3h), aligned to UTC epoch
+  // boundaries so they land on clean HH:00 values
+  function timeTicks(tMin, tMax, stepHours) {
+    const stepMs = stepHours * 3600 * 1000;
+    const start = Math.ceil(tMin / stepMs) * stepMs;
+    const out = [];
+    for (let t = start; t <= tMax; t += stepMs) out.push(t);
+    return out;
+  }
+
+  function fmtTimeTick(ms) {
+    const d = new Date(ms);
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mm = String(d.getUTCMinutes()).padStart(2, '0');
+    const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    return `${mo}/${dd} ${hh}:${mm}`;
+  }
+
+  const OMNI_ROWS = [
+    { times: OMNI_DATA.imf.times, values: OMNI_DATA.imf.bx, label: 'IMF Bx (nT)', zeroLine: true },
+    { times: OMNI_DATA.imf.times, values: OMNI_DATA.imf.by, label: 'IMF By (nT)', zeroLine: true },
+    { times: OMNI_DATA.omni.times, values: OMNI_DATA.omni.efield, label: 'E-field (mV/m)', zeroLine: true },
+    { times: OMNI_DATA.omni.times, values: OMNI_DATA.omni.symH, label: 'SYM-H (nT)', zeroLine: true },
+  ];
+
+  function renderOmni() {
+    const W = +omniSvg.getAttribute('width'), H = +omniSvg.getAttribute('height');
+    const m = { l: 56, r: 16, t: 8, b: 30 };
+    const rowGap = 6;
+    const nRows = OMNI_ROWS.length;
+    const rowH = (H - m.t - m.b - rowGap * (nRows - 1)) / nRows;
+
+    const tMin = Math.min(OMNI_DATA.imf.times[0], OMNI_DATA.omni.times[0]);
+    const tMax = Math.max(
+      OMNI_DATA.imf.times[OMNI_DATA.imf.times.length - 1],
+      OMNI_DATA.omni.times[OMNI_DATA.omni.times.length - 1]
+    );
+    const xS = linScale([tMin, tMax], [m.l, W - m.r]);
+    const pw = W - m.l - m.r;
+
+    const curT = snapTimeMs(SNAPS[state.snapIdx]);
+    const xTicks = timeTicks(tMin, tMax, 3);
+
+    omniSvg.innerHTML = '';
+
+    OMNI_ROWS.forEach((row, ri) => {
+      const rowTop = m.t + ri * (rowH + rowGap);
+      let vmin = Infinity, vmax = -Infinity;
+      for (const v of row.values) {
+        if (v == null) continue;
+        if (v < vmin) vmin = v;
+        if (v > vmax) vmax = v;
+      }
+      if (!isFinite(vmin)) { vmin = -1; vmax = 1; }
+      if (vmin === vmax) { vmin -= 1; vmax += 1; }
+      const pad = (vmax - vmin) * 0.1;
+      vmin -= pad; vmax += pad;
+
+      const yS = linScale([vmin, vmax], [rowTop + rowH, rowTop]);
+      const yTicks = niceTicks(vmin, vmax, 4);
+
+      const gridG = el('g', { class: 'grid' });
+      omniSvg.appendChild(gridG);
+      yTicks.forEach((yv) => {
+        gridG.appendChild(el('line', { x1: m.l, x2: m.l + pw, y1: yS(yv), y2: yS(yv) }));
+      });
+
+      if (row.zeroLine && vmin < 0 && vmax > 0) {
+        omniSvg.appendChild(el('line', {
+          x1: m.l, x2: m.l + pw, y1: yS(0), y2: yS(0),
+          stroke: '#8ea0bd', 'stroke-width': 1, 'stroke-dasharray': '2,2', opacity: 0.6,
+        }));
+      }
+
+      const pts = [];
+      row.times.forEach((t, i) => {
+        const v = row.values[i];
+        if (v == null) {
+          if (pts.length) {
+            omniSvg.appendChild(el('polyline', {
+              points: pts.join(' '), fill: 'none', stroke: '#4fc3f7', 'stroke-width': 1.3,
+            }));
+            pts.length = 0;
+          }
+          return;
+        }
+        pts.push(`${xS(t)},${yS(v)}`);
+      });
+      if (pts.length) {
+        omniSvg.appendChild(el('polyline', {
+          points: pts.join(' '), fill: 'none', stroke: '#4fc3f7', 'stroke-width': 1.3,
+        }));
+      }
+
+      const axisG = el('g', { class: 'axis' });
+      yTicks.forEach((yv) => {
+        axisG.appendChild(el('line', { x1: m.l - 6, x2: m.l, y1: yS(yv), y2: yS(yv), stroke: '#8ea0bd' }));
+        const t = el('text', { x: m.l - 9, y: yS(yv) + 3, 'text-anchor': 'end' });
+        t.textContent = niceTickLabel(yv);
+        axisG.appendChild(t);
+      });
+      omniSvg.appendChild(axisG);
+
+      const rowLabel = el('text', { x: m.l + 6, y: rowTop + 11, 'text-anchor': 'start' });
+      rowLabel.style.fill = '#dfe8f5'; rowLabel.style.fontSize = '11px'; rowLabel.style.fontWeight = '600';
+      rowLabel.textContent = row.label;
+      omniSvg.appendChild(rowLabel);
+
+      omniSvg.appendChild(el('rect', { x: m.l, y: rowTop, width: pw, height: rowH, fill: 'none', stroke: '#26364f' }));
+
+      // bottom row gets the shared time axis
+      if (ri === nRows - 1) {
+        const xAxisG = el('g', { class: 'axis' });
+        xTicks.forEach((tv) => {
+          xAxisG.appendChild(el('line', { x1: xS(tv), x2: xS(tv), y1: rowTop + rowH, y2: rowTop + rowH + 5, stroke: '#8ea0bd' }));
+          const t = el('text', { x: xS(tv), y: rowTop + rowH + 16, 'text-anchor': 'middle' });
+          t.textContent = fmtTimeTick(tv);
+          xAxisG.appendChild(t);
+        });
+        omniSvg.appendChild(xAxisG);
+      }
+    });
+
+    // vertical dashed red line tracking the top time-bar's current snapshot,
+    // drawn across all four rows on top of everything else
+    if (curT >= tMin && curT <= tMax) {
+      const xLine = xS(curT);
+      omniSvg.appendChild(el('line', {
+        x1: xLine, x2: xLine, y1: m.t, y2: H - m.b,
+        stroke: '#ff3b30', 'stroke-width': 1.6, 'stroke-dasharray': '5,4',
+      }));
+    }
+  }
+
+  function niceTickLabel(v) {
+    return Math.abs(v) < 1 && v !== 0 ? v.toFixed(2) : v.toFixed(v % 1 === 0 ? 0 : 1);
   }
 
   // ---------- map panel ----------
@@ -842,6 +995,7 @@
     refreshMapChips();
     refreshProfileChips();
     refreshContourChips();
+    renderOmni();
     renderMap();
     renderProfiles();
     renderContours();

@@ -313,6 +313,14 @@
   </div>
 
   <div class="panel">
+    <h2>Step 0 &middot; Solar wind IMF &amp; geomagnetic time series</h2>
+    <p class="sub">IMF B<sub>x</sub>, B<sub>y</sub> (SWMF input, GSM) and OMNI-observed dawn&#8209;dusk E&#8209;field / SYM&#8209;H for the 2024&#8209;10&#8209;10 storm. The dashed red line tracks the snapshot selected on the time&#8209;bar above.</p>
+    <div id="omniScroll" style="overflow-x:auto; padding-bottom:4px;">
+      <svg id="omniSvg" width="1180" height="460"></svg>
+    </div>
+  </div>
+
+  <div class="panel">
     <h2>Step 1 &middot; Parcel trajectory map</h2>
     <p class="sub">Trajectories of all traced edge parcels at the 350&nbsp;km reference altitude, coloured by the selected variable at t0. Click chips below to highlight one or more parcels (bold track, green = start, magenta = end).</p>
     <div class="chip-actions">
@@ -387,6 +395,7 @@
 </main>
 
 <script src="data.js"></script>
+<script src="omni_data.js"></script>
 <script src="seed_log.js"></script>
 <script src="app.js"></script>
 </body>
