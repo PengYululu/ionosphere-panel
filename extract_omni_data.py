@@ -1,5 +1,5 @@
 """
-Extract solar wind IMF (Bx, By) and OMNI observational (E-field, SYM-H) time
+Extract solar wind IMF (Bz, By) and OMNI observational (E-field, SYM-H) time
 series for the standalone ionosphere_panel web page's Step 0 plot. Parsing
 logic mirrors read_swmf_file()/read_omni_file() from ../swmf_omni_functions.py
 (and the OMNI section of ../swmf_omni.ipynb), reimplemented here so this
@@ -28,8 +28,8 @@ WINDOW_END = datetime(2024, 10, 11, 6, 0, 0)
 
 
 def read_swmf_imf(file):
-    """bx/by (nT) vs time, SWMF-ready IMF file (see read_swmf_file in swmf_omni_functions.py)."""
-    times, bx, by = [], [], []
+    """bz/by (nT) vs time, SWMF-ready IMF file (see read_swmf_file in swmf_omni_functions.py)."""
+    times, bz, by = [], [], []
     with open(file, 'r') as f:
         started = False
         for line in f:
@@ -38,16 +38,16 @@ def read_swmf_imf(file):
                     started = True
                 continue
             parts = line.split()
-            if len(parts) < 9:
+            if len(parts) < 10:
                 continue
             year, month, day, hour, minute, second = (int(p) for p in parts[0:6])
             t = datetime(year, month, day, hour, minute, second)
             if not (WINDOW_START <= t <= WINDOW_END):
                 continue
             times.append(t)
-            bx.append(float(parts[7]))
             by.append(float(parts[8]))
-    return times, bx, by
+            bz.append(float(parts[9]))
+    return times, bz, by
 
 
 def read_omni(file):
@@ -90,7 +90,7 @@ def epoch_ms(t):
 
 
 def main():
-    imf_times, bx, by = read_swmf_imf(IMF_FILE)
+    imf_times, bz, by = read_swmf_imf(IMF_FILE)
     omni_times, efield, symh = read_omni(OMNI_FILE)
     print(f'imf: {len(imf_times)} points, {imf_times[0]} .. {imf_times[-1]}')
     print(f'omni: {len(omni_times)} points, {omni_times[0]} .. {omni_times[-1]}')
@@ -98,7 +98,7 @@ def main():
     payload = {
         'imf': {
             'times': [epoch_ms(t) for t in imf_times],
-            'bx': [round(v, 3) for v in bx],
+            'bz': [round(v, 3) for v in bz],
             'by': [round(v, 3) for v in by],
         },
         'omni': {

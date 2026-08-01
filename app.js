@@ -200,7 +200,7 @@
   }
 
   const OMNI_ROWS = [
-    { times: OMNI_DATA.imf.times, values: OMNI_DATA.imf.bx, label: 'IMF Bx (nT)', zeroLine: true },
+    { times: OMNI_DATA.imf.times, values: OMNI_DATA.imf.bz, label: 'IMF Bz (nT)', zeroLine: true },
     { times: OMNI_DATA.imf.times, values: OMNI_DATA.imf.by, label: 'IMF By (nT)', zeroLine: true },
     { times: OMNI_DATA.omni.times, values: OMNI_DATA.omni.efield, label: 'E-field (mV/m)', zeroLine: true },
     { times: OMNI_DATA.omni.times, values: OMNI_DATA.omni.symH, label: 'SYM-H (nT)', zeroLine: true },
