@@ -903,7 +903,11 @@
   // loads those same values back into the input boxes so they can be edited
   // and saved in place (instead of appending a duplicate row) via "Update row"
   function jumpToLogRow(row, idx) {
-    const snapIdx = SNAPS.findIndex((s) => s.label === row.time);
+    // tolerate an un-zero-padded hour (e.g. "0:00" instead of "00:00") in
+    // stored rows — a malformed seed/import shouldn't silently no-op a click
+    const normTime = (t) => (t.length === 4 ? '0' + t : t);
+    const wantTime = normTime(row.time);
+    const snapIdx = SNAPS.findIndex((s) => normTime(s.label) === wantTime);
     if (snapIdx === -1) return;
 
     const parcelSet = new Set();
