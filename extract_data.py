@@ -64,11 +64,6 @@ def main():
         alt_full_km = traj[:, 0, 2, 0] / 1000.0          # (n_alt,)
         alt_mid_km = (alt_full_km[:-1] + alt_full_km[1:]) / 2.0  # (n_alt-1,) matches ne_profile
 
-        # downsample altitude axis by 2x for ne_profile to keep the embedded
-        # JSON payload reasonably sized (profile shape is smooth, so this
-        # loses negligible visual fidelity)
-        alt_mid_km_ds = alt_mid_km[::2]
-
         ialt_ref = int(np.argmin(np.abs(alt_full_km - TARGET_ALT_KM)))
 
         lons = traj[ialt_ref, :, 0, :]   # (n_steps+1, n_parcels)
@@ -112,7 +107,7 @@ def main():
             'dateLabel': date_label,
             'nParcels': int(n_parcels),
             'nSteps': int(n_stepsp1),
-            'altMidKm': [round(float(v), 2) for v in alt_mid_km_ds],
+            'altMidKm': [round(float(v), 2) for v in alt_mid_km],
             'timeLabels': time_labels,
             'lon': round_arr(lons, 3),          # [step][parcel]
             'lat': round_arr(lats, 3),
@@ -120,7 +115,7 @@ def main():
             'NmF2': round_arr(NmF2, 4),
             'topHeight': round_arr(top_height, 4) if top_height is not None else None,
             'bottomHeight': round_arr(bottom_height, 4) if bottom_height is not None else None,
-            'neProfile': round_arr(ne_profile[:, ::2, :], 3),  # [step][alt][parcel], alt downsampled 2x
+            'neProfile': round_arr(ne_profile, 3),  # [step][alt][parcel]
         }
         snapshots.append(snap)
         print(f'  {tag}: {n_parcels} parcels, {n_stepsp1} steps')
