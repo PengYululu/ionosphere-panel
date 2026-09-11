@@ -262,6 +262,17 @@
     color: var(--text-dim);
     margin-bottom: 4px;
   }
+  #periodCheckWrap { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+  #periodCheckTrack { display: flex; flex-direction: column; gap: 26px; flex: 1; min-width: 0; }
+  #periodCheckLegendWrap { min-width: 160px; display: flex; flex-direction: column; gap: 18px; }
+  .period-check-row {
+    display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start;
+    border-top: 1px solid var(--border); padding-top: 18px;
+  }
+  .period-check-row:first-child { border-top: none; padding-top: 0; }
+  .period-check-left { flex: 0 0 auto; }
+  .period-check-right { flex: 1; min-width: 0; overflow-x: auto; padding-bottom: 4px; }
+  .period-check-title { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; }
   footer {
     text-align: center;
     color: var(--text-dim);
@@ -363,6 +374,28 @@
   </div>
 
   <div class="panel">
+    <h2>Step 2.2 &middot; Period check</h2>
+    <p class="sub">For each parcel selected in Step 2.1 above, at the current snapshot: left is its trajectory (coloured by the Step 1 map variable) drawn over a background field sampled along the trace; right is that same background field sampled at the parcel's own position, stacked above its n<sub>e</sub> time&ndash;height contour (identical to Step 2.1's, sharing the same time axis).</p>
+    <div class="control-group" style="margin-bottom:12px; max-width:280px;">
+      <label for="periodCheckVarSelect">Background variable</label>
+      <select id="periodCheckVarSelect">
+        <option value="TEC">TEC</option>
+        <option value="Eeast">E-east</option>
+        <option value="Rho">Rho</option>
+        <option value="ViNWMeri">Vi-nw meridional</option>
+        <option value="ViNWZonal">Vi-nw zonal</option>
+      </select>
+    </div>
+    <div id="periodCheckWrap">
+      <div id="periodCheckTrack"></div>
+      <div id="periodCheckLegendWrap">
+        <svg id="periodCheckBgLegendSvg" width="140" height="300"></svg>
+        <svg id="periodCheckNeLegendSvg" width="140" height="260"></svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
     <h2>Step 3 &middot; Selected parcel log</h2>
     <p class="sub">Keep a running log of parcels worth revisiting, sorted by geographic region: pick a snapshot with the slider above, type the parcel index (or indices) you care about into whichever region column(s) apply, and add a row. Click any row to jump back to its snapshot, re-highlight those parcels in Steps 1, 2, and 2.1, and load its values back into the boxes below for editing — change them and click "Update row" to save in place instead of creating a duplicate. The table is saved in this browser automatically, and can be exported as a CSV.</p>
     <div class="log-input-row">
@@ -396,6 +429,7 @@
 
 <script src="data.js"></script>
 <script src="omni_data.js"></script>
+<script src="background_data.js"></script>
 <script src="seed_log.js"></script>
 <script src="app.js"></script>
 </body>

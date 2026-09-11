@@ -3,8 +3,10 @@
 A standalone, offline-capable web page for exploring backward-traced GITM
 parcel trajectories and their electron density profiles. Built to replicate
 `plot_iono_along_trace_single()`, `plot_ne_profile_along_trace()`, and
-`plot_ne_contour_along_trace()` from `GITM_trace_parcel.ipynb` as an
-interactive browser tool instead of static matplotlib figures.
+`plot_ne_contour_along_trace()` from `GITM_trace_parcel.ipynb`, and (for
+Step 2.2) `plot_iono_along_trace_with_background()` / `plot_background_and_ne_along_trace()`
+from `GITM_tad_keogram.ipynb`, as an interactive browser tool instead of
+static matplotlib figures.
 
 This folder is self-contained: nothing in the main `Code/` project (notebooks,
 `GITM_functions.py`, etc.) is required or modified to use it.
@@ -47,6 +49,17 @@ python3 -m http.server 8743
   [bottom_height, top_height] window are masked black, and a dotted line
   traces hmF2(t) across the panel. All panels share one fixed color scale
   (0–15 ×10¹¹ m⁻³, matching the notebook's `vmax=1.5e12` default).
+- **Step 2.2 — Period check**: for each parcel selected in Step 2.1, at the
+  currently selected UT snapshot, a two-panel row: **left** is that parcel's
+  full trajectory (lon/lat, colored by the Step 1 map variable) drawn over a
+  background field stitched along the trace (nearest-time, nearest-longitude
+  latitude strip per traced step — a lon-lat "curtain"); **right** is that
+  same background field sampled at the parcel's own position at each traced
+  step (line plot), stacked directly above its n<sub>e</sub> time–height
+  contour (identical to Step 2.1's, sharing the same time axis). A dropdown
+  picks which background field to show: TEC, E-east, Rho, Vi-nw meridional,
+  or Vi-nw zonal (see `background_data.js` below). One row is drawn per
+  parcel selected in Step 2.1 — this step has no selector of its own.
 - **Step 3 — Selected parcel log**: a running table you build up by hand,
   organized by geographic region. Each row is one snapshot; the 6 data
   columns are 3 latitude bands (40–50°, 50–60°, 60–70°) × West/East of the
@@ -76,12 +89,14 @@ Page skeleton only — no calculations happen here. Contains:
 - The control bar markup (time slider, hemisphere toggle, variable select)
 - Empty container elements (`#omniSvg`, `#mapSvg`, `#legendSvg`, `#mapChips`,
   `#profileChips`, `#profileAxis`, `#profileScroll` > `#profileTrack`,
-  `#contourChips`, `#contourTrack`, `#contourLegendSvg`, `#logRegionInputs`,
-  `#logTable` > `#logTableHeadRow` / `#logTableBody`) that `app.js` populates
-  at runtime
-- `<script>` tags loading `data.js`, then `omni_data.js`, then `app.js`, in
-  that order (`app.js` assumes `IONO_DATA` and `OMNI_DATA` already exist as
-  globals)
+  `#contourChips`, `#contourTrack`, `#contourLegendSvg`,
+  `#periodCheckVarSelect`, `#periodCheckTrack`, `#periodCheckBgLegendSvg`,
+  `#periodCheckNeLegendSvg`, `#logRegionInputs`, `#logTable` >
+  `#logTableHeadRow` / `#logTableBody`) that `app.js` populates at runtime
+- `<script>` tags loading `data.js`, then `omni_data.js`, then
+  `background_data.js`, then `app.js`, in that order (`app.js` assumes
+  `IONO_DATA`, `OMNI_DATA`, and (if present) `BACKGROUND_DATA` already exist
+  as globals)
 
 Edit this file for: colors/CSS, page text, control widget markup, layout.
 
@@ -96,35 +111,46 @@ bottom:
 | Function | Purpose |
 |---|---|
 | `VAR_CONFIG` (line 13) | Defines the map's color-variable options: `hmF2` (200–500 km) and `NmF2` (0–15 ×10¹¹ m⁻³), including the display scale factor for each |
-| `CONTOUR_CFG` (line 21) | Fixed color-scale config for the Step 2.1 contour (0–15 ×10¹¹ m⁻³, same convention as `NmF2` above — matches the notebook's `vmin=0, vmax=1.5e12`) |
-| `state` (line 23) | Current UI state: selected snapshot index, hemisphere, color variable, three independent parcel-highlight sets (`mapHighlight`, `profileHighlight`, `contourHighlight`), `logRows` (the Step 3 table's data), and `editingLogIdx` (which row, if any, is currently loaded into the input boxes for editing) |
-| `LOG_REGIONS` (line 38) | The Step 3 table's 6 region columns (id + header label): 3 latitude bands × West/East. Change this array to rename, add, or remove region columns — the input row, table header, and CSV export are all generated from it |
-| `LOG_STORAGE_KEY` (line 47) | The `localStorage` key the Step 3 log table is saved under (bumped to `.v2` when the row shape changed from free-text to per-region) |
-| `jetColor(t)` (line 59) | Hand-rolled "jet"-style colormap, maps a normalized value in [0,1] to an RGB string |
-| `paletteColor(idx)` (line 67) | Assigns each parcel index a distinct hue (golden-angle rotation) so the same parcel index has a consistent color across all panels |
-| `linScale(domain, range)` (line 72) | Generic linear scale helper (like a minimal D3 `scaleLinear`) |
-| `niceStep(rawStep)` / `niceTicks(vmin, vmax, targetCount)` (lines 79, 93) | Rounds axis tick spacing to "nice" 1/2/5/10×10ⁿ values (D3/matplotlib-style tick picking), so axes show round numbers instead of arbitrary decimals |
-| `ticksAtStep(vmin, vmax, step)` (line 108) | Ticks at an *exact* fixed step (e.g. always every 10°) — used for the map's lat/lon grid, where "nice" auto-spacing wasn't precise enough |
-| `renderChipRow(...)` (line 148) | Builds the clickable parcel-index chip lists used by the Step 1, Step 2, and Step 2.1 selectors |
-| `snapTimeMs(snap)` (line 175) | Parses a snapshot's `"MMDD_HHMM"` tag into a UTC epoch ms value (year hardcoded 2024, see `extract_data.py`), so it can be compared against `OMNI_DATA`'s own epoch ms timestamps |
-| `timeTicks(tMin, tMax, stepHours)` / `fmtTimeTick(ms)` (lines 185, 193) | Round-hour x-axis ticks for Step 0 (aligned to UTC epoch boundaries) and their `"MM/DD HH:MM"` label formatting |
-| `OMNI_ROWS` (line 202) | The 4 Step 0 rows (IMF Bz, IMF By, E-field, SYM-H), each pointing at the matching `OMNI_DATA.imf`/`OMNI_DATA.omni` arrays — add a row here (plus a field in `extract_omni_data.py`'s payload) to plot another OMNI/IMF quantity |
-| `renderOmni()` (line 209) | Draws Step 0: one row per `OMNI_ROWS` entry (own y-scale/ticks per row, shared x/time scale), a dashed zero line, and the dashed red vertical line at the current snapshot's time (from `snapTimeMs`) drawn on top across all rows |
-| `renderMap()` (line 324) | Draws Step 1: masks parcels by hemisphere, draws the fixed 150–350°E / 10°-resolution lat/lon grid (see "Known quirks" below), per-segment colored trajectory lines, and highlights selected parcels |
-| `renderLegend(cfg)` / `drawColorLegend(svgEl, cfg, gradId)` (lines 472, 478) | Draws a vertical color-scale bar; `drawColorLegend` is the shared implementation used by both the map's legend and the Step 2.1 contour's legend |
-| `renderProfiles()` (line 511) | Draws Step 2: the fixed altitude axis (`#profileAxis`, stays visible while the track scrolls) plus one small SVG panel per traced time step, each showing log(n<sub>e</sub>) vs. altitude for the selected parcel(s), with optional hmF2/top/bottom boundary lines + value labels when a single parcel is selected |
-| `altEdgesFromMid(altArr)` (line 641) | Reconstructs cell edges from the altitude midpoint array (e.g. `[100,200,300]` → `[50,150,250,350]`), needed so Step 2.1's contour cells align correctly with `altMidKm` |
-| `renderContours()` (line 651) | Draws Step 2.1: one stacked time–height contour panel per selected parcel, each a grid of colored `<rect>` cells (masked black outside the top/bottom-height window) plus a dotted hmF2(t) overlay line |
-| `buildLogInputs()` / `buildLogTableHead()` (lines 774, ~796) | Generate the Step 3 input row and table header from `LOG_REGIONS`, once at startup |
-| `loadLog()` / `saveLog()` (lines 809, ~821) | Read/write the Step 3 log table to the browser's `localStorage`, so it survives page reloads without any server |
-| `renderLogTable()` (line 830) | Redraws the Step 3 `<table>` rows from `state.logRows`, highlighting whichever row matches `state.editingLogIdx`. Each row gets a click handler (`jumpToLogRow`) and its own "Remove" button (which stops the click from also bubbling into the row handler, and exits edit mode if the removed row was the one being edited) |
-| `parseParcelList(text)` (line 877) | Parses a region cell's text ("0, 5, 12") into a set of integer parcel indices |
-| `clearLogInputs()` / `exitLogEditMode()` (lines 887, ~893) | Clear the 6 region inputs; `exitLogEditMode` additionally resets `state.editingLogIdx` to `null` and restores the "Add row" button/UI to its non-editing state |
-| `jumpToLogRow(row, idx)` (line 905) | Clicking a Step 3 row calls this: jumps to that row's snapshot, sets `mapHighlight`/`profileHighlight`/`contourHighlight` to the union of parcels across all 6 regions, **and** loads those same region values back into the input boxes with `state.editingLogIdx = idx`, switching the "Add row" button to "Update row" |
-| `csvField(value)` / `downloadLogCsv()` (lines 930, 936) | Build a CSV string from the logged rows and trigger a browser file download (via a temporary `Blob` + `<a download>` link — no server involved) |
-| `refreshMapChips()` / `refreshProfileChips()` / `refreshContourChips()` (line 957 onward) | Rebuild the chip lists whenever the snapshot, hemisphere, or selection changes |
-| `renderEverything()` (line 986) | Top-level re-render (now also calls `renderOmni()`), called by every control's event listener (including `jumpToLogRow`) |
-| `addLogRowFromInput()` (line 1060) | Reads all 6 Step 3 region inputs; if `state.editingLogIdx` is set, overwrites that row in place, otherwise appends a new row — this is the "update vs. duplicate" logic. Either way it saves, exits edit mode, and re-renders the table |
+| `CONTOUR_CFG` (line 21) | Fixed color-scale config for the Step 2.1/2.2 n<sub>e</sub> contour (0–15 ×10¹¹ m⁻³, same convention as `NmF2` above — matches the notebook's `vmin=0, vmax=1.5e12`) |
+| `BG` (line 27) | Decodes `BACKGROUND_DATA` (from `background_data.js`) once at startup: base64 → `Float32Array` per background variable, plus `lonDeg`/`latDeg`/`timesMs` grids. `null` if `background_data.js` wasn't loaded, in which case Step 2.2 shows a note instead of erroring |
+| `state` (line 47) | Current UI state: selected snapshot index, hemisphere, color variable, three independent parcel-highlight sets (`mapHighlight`, `profileHighlight`, `contourHighlight`), `backgroundVar` (Step 2.2's selected field), `logRows` (the Step 3 table's data), and `editingLogIdx` (which row, if any, is currently loaded into the input boxes for editing) |
+| `LOG_REGIONS` (line 63) | The Step 3 table's 6 region columns (id + header label): 3 latitude bands × West/East. Change this array to rename, add, or remove region columns — the input row, table header, and CSV export are all generated from it |
+| `LOG_STORAGE_KEY` (line 72) | The `localStorage` key the Step 3 log table is saved under (bumped to `.v2` when the row shape changed from free-text to per-region) |
+| `jetColor(t)` (line 84) | Hand-rolled "jet"-style colormap, maps a normalized value in [0,1] to an RGB string |
+| `bwrColor(t)` / `colorForValue(v, cfg)` (lines 93, 105) | `bwrColor` is a diverging blue-white-red colormap (t in [-1,1]); `colorForValue` picks jet or bwr based on `cfg.cmap` (used for Step 2.2's background fields, which can be signed) and falls back to jet everywhere else |
+| `paletteColor(idx)` (line 114) | Assigns each parcel index a distinct hue (golden-angle rotation) so the same parcel index has a consistent color across all panels |
+| `linScale(domain, range)` (line 119) | Generic linear scale helper (like a minimal D3 `scaleLinear`) |
+| `niceStep(rawStep)` / `niceTicks(vmin, vmax, targetCount)` (lines 126, 140) | Rounds axis tick spacing to "nice" 1/2/5/10×10ⁿ values (D3/matplotlib-style tick picking), so axes show round numbers instead of arbitrary decimals |
+| `ticksAtStep(vmin, vmax, step)` (line 155) | Ticks at an *exact* fixed step (e.g. always every 10°) — used for the map's lat/lon grid, where "nice" auto-spacing wasn't precise enough |
+| `renderChipRow(...)` (line 199) | Builds the clickable parcel-index chip lists used by the Step 1, Step 2, and Step 2.1 selectors |
+| `snapTimeMs(snap)` (line 226) | Parses a snapshot's `"MMDD_HHMM"` tag into a UTC epoch ms value (year hardcoded 2024, see `extract_data.py`), so it can be compared against `OMNI_DATA`'s own epoch ms timestamps |
+| `stepTimeMs(snap, s)` (line 238) | Like `snapTimeMs`, but for one traced step `s` (from `snap.timeLabels[s]`, handling the `"MM/DD HH:MM"` day-crossing format too) — used by Step 2.2 to match each traced step against `BACKGROUND_DATA`'s own timestamps |
+| `nearestTimeIdx` / `nearestLonIdx` / `nearestLatIdx` (line 257 onward) | Nearest-neighbor lookups into `BG.timesMs` / `BG.lonDeg` / `BG.latDeg` (longitude match is circular, handling the 0/360 wrap) — the JS equivalent of the notebook's `np.argmin(np.abs(...))` matching |
+| `stitchBackgroundAlongTrajectory(...)` / `sampleBackgroundAlongTrajectory(...)` (lines 290, 305) | Direct ports of the notebook's `stitch_tec_background_along_trajectory()` / `sample_tec_percent_along_trajectory()`: the former returns a full latitude strip per traced step (for Step 2.2's left-panel curtain), the latter a single point value per step (for its right-panel line plot) |
+| `midpointEdges(arr)` (line 320) | Reconstructs cell edges from an array of (possibly non-monotonic) sample midpoints — same algebra as `altEdgesFromMid` below, reused for Step 2.2's irregular trajectory-longitude curtain columns |
+| `timeTicks(tMin, tMax, stepHours)` / `fmtTimeTick(ms)` (lines 332, ~340) | Round-hour x-axis ticks for Step 0 (aligned to UTC epoch boundaries) and their `"MM/DD HH:MM"` label formatting |
+| `OMNI_ROWS` (line 349) | The 4 Step 0 rows (IMF Bz, IMF By, E-field, SYM-H), each pointing at the matching `OMNI_DATA.imf`/`OMNI_DATA.omni` arrays — add a row here (plus a field in `extract_omni_data.py`'s payload) to plot another OMNI/IMF quantity |
+| `renderOmni()` (line 356) | Draws Step 0: one row per `OMNI_ROWS` entry (own y-scale/ticks per row, shared x/time scale), a dashed zero line, and the dashed red vertical line at the current snapshot's time (from `snapTimeMs`) drawn on top across all rows |
+| `renderMap()` (line 471) | Draws Step 1: masks parcels by hemisphere, draws the fixed 150–350°E / 10°-resolution lat/lon grid (see "Known quirks" below), per-segment colored trajectory lines, and highlights selected parcels |
+| `renderLegend(cfg)` / `drawColorLegend(svgEl, cfg, gradId)` (lines 619, 625) | Draws a vertical color-scale bar (jet or bwr, from `cfg.cmap`); `drawColorLegend` is the shared implementation used by the map's legend, the Step 2.1 contour's legend, and both of Step 2.2's legends |
+| `renderProfiles()` (line 661) | Draws Step 2: the fixed altitude axis (`#profileAxis`, stays visible while the track scrolls) plus one small SVG panel per traced time step, each showing log(n<sub>e</sub>) vs. altitude for the selected parcel(s), with optional hmF2/top/bottom boundary lines + value labels when a single parcel is selected |
+| `altEdgesFromMid(altArr)` (line 791) | Reconstructs cell edges from the altitude midpoint array (e.g. `[100,200,300]` → `[50,150,250,350]`), needed so the n<sub>e</sub> contour's cells align correctly with `altMidKm` |
+| `computeContourLayout(snap)` / `buildContourSvg(snap, k, layout)` (lines 803, 824) | Split out of `renderContours()` so the same n<sub>e</sub> time–height contour drawing (scales computed once per snapshot via `computeContourLayout`, one parcel's SVG via `buildContourSvg`) can be reused by both Step 2.1 and Step 2.2's bottom-right panel |
+| `renderContours()` (line 906) | Draws Step 2.1: one stacked time–height contour panel per selected parcel (via `buildContourSvg`), each a grid of colored `<rect>` cells (masked black outside the top/bottom-height window) plus a dotted hmF2(t) overlay line |
+| `trajArraysFor(snap, k)` (line 938) | One parcel's full `lon`/`lat`/per-step epoch-ms trajectory arrays, shared by Step 2.2's map and line panel |
+| `buildPeriodCheckMap(snap, k)` (line 953) | Step 2.2's left panel: a lon-lat map for one parcel, with the selected background field stitched along its trajectory as a curtain (`stitchBackgroundAlongTrajectory` + `midpointEdges` for irregular cell columns) and the trajectory itself drawn on top, colored by the Step 1 map variable — a JS port of `plot_iono_along_trace_with_background()` |
+| `buildPeriodCheckLinePanel(snap, k, layout, bgVar)` (line 1068) | Step 2.2's right panel, top half: the background field sampled at the parcel's own position per traced step (`sampleBackgroundAlongTrajectory`), auto-scaled y-axis. Shares `layout`'s x-axis pixel positions with `buildContourSvg` so it lines up with the contour drawn directly below it — together a JS port of `plot_background_and_ne_along_trace()` |
+| `renderPeriodCheck()` (line 1130) | Draws Step 2.2: one row (left map + right line/contour) per parcel selected in Step 2.1's `contourHighlight`, at the current snapshot; shows a note instead if no parcels are selected or `background_data.js` didn't load |
+| `buildLogInputs()` / `buildLogTableHead()` (lines 1188, ~1210) | Generate the Step 3 input row and table header from `LOG_REGIONS`, once at startup |
+| `loadLog()` / `saveLog()` (lines 1223, ~1235) | Read/write the Step 3 log table to the browser's `localStorage`, so it survives page reloads without any server |
+| `renderLogTable()` (line 1244) | Redraws the Step 3 `<table>` rows from `state.logRows`, highlighting whichever row matches `state.editingLogIdx`. Each row gets a click handler (`jumpToLogRow`) and its own "Remove" button (which stops the click from also bubbling into the row handler, and exits edit mode if the removed row was the one being edited) |
+| `parseParcelList(text)` (line 1291) | Parses a region cell's text ("0, 5, 12") into a set of integer parcel indices |
+| `clearLogInputs()` / `exitLogEditMode()` (lines 1301, ~1307) | Clear the 6 region inputs; `exitLogEditMode` additionally resets `state.editingLogIdx` to `null` and restores the "Add row" button/UI to its non-editing state |
+| `jumpToLogRow(row, idx)` (line 1319) | Clicking a Step 3 row calls this: jumps to that row's snapshot, sets `mapHighlight`/`profileHighlight`/`contourHighlight` to the union of parcels across all 6 regions, **and** loads those same region values back into the input boxes with `state.editingLogIdx = idx`, switching the "Add row" button to "Update row" |
+| `csvField(value)` / `downloadLogCsv()` (lines 1348, 1354) | Build a CSV string from the logged rows and trigger a browser file download (via a temporary `Blob` + `<a download>` link — no server involved) |
+| `refreshMapChips()` / `refreshProfileChips()` / `refreshContourChips()` (line 1375 onward) | Rebuild the chip lists whenever the snapshot, hemisphere, or selection changes (`refreshContourChips` also re-renders Step 2.2, since it shares `contourHighlight`) |
+| `renderEverything()` (line 1405) | Top-level re-render (calls `renderOmni()`, ..., `renderContours()`, `renderPeriodCheck()`), called by every control's event listener (including `jumpToLogRow`) |
+| `addLogRowFromInput()` (line 1485) | Reads all 6 Step 3 region inputs; if `state.editingLogIdx` is set, overwrites that row in place, otherwise appends a new row — this is the "update vs. duplicate" logic. Either way it saves, exits edit mode, and re-renders the table |
 
 Edit this file for: anything visual about the plots — colors, axis behavior,
 highlight styling, profile/contour layout, adding a new map variable (also
@@ -208,6 +234,94 @@ script (and that drive mounted) if you want to **regenerate** `data.js` with
 different snapshots, a different trace direction (forward vs. backward), or
 additional fields (e.g. Te/Ti, which exist in the source `.npy` files but
 aren't currently extracted).
+
+### `background_data.js`
+
+Not hand-written — generated by `extract_background_data.py` (see below).
+Defines one global:
+
+```js
+const BACKGROUND_DATA = {
+  nTime: 113, nLon: 90, nLat: 90,      // downsampled grid (see below)
+  lonDeg: [...], latDeg: [...],        // degrees
+  timesMs: [...],                      // epoch ms, one per time step
+  vars: {
+    TEC:      { label, cmap, vmin, vmax, scale, dataB64 },
+    Eeast:    { label, cmap, vmin, vmax, scale, dataB64 },
+    Rho:      { label, cmap, vmin, vmax, scale, dataB64 },
+    ViNWMeri: { label, cmap, vmin, vmax, scale, dataB64 },
+    ViNWZonal:{ label, cmap, vmin, vmax, scale, dataB64 },
+  },
+};
+```
+
+Each variable's `dataB64` is a base64-encoded `Float32Array`, row-major
+`[time][lon][lat]` (`nTime × nLon × nLat` values) — `app.js` decodes all five
+once at startup (see `BG` in the function table above) into real
+`Float32Array`s for the nearest-neighbor lookups Step 2.2 needs. `cmap` is
+`'jet'` or `'bwr'` (diverging, for the signed fields), and `scale` matches
+the same display-scale convention as `VAR_CONFIG`/`CONTOUR_CFG` elsewhere
+(e.g. Rho is stored in kg/m³ but displayed ×10⁻¹¹).
+
+Like `data.js`, this is a frozen, downsampled snapshot — Step 2.2 has no
+runtime dependency on the source `.npy` files, the external drive, or
+Python.
+
+### `extract_background_data.py`
+
+The Step 2.2 equivalent of `extract_data.py`. Run with:
+
+```bash
+/opt/homebrew/bin/python3.12 extract_background_data.py
+```
+
+Reads the 5 precomputed global background fields directly (does **not**
+recompute TEC/E-east/Rho/Vi-nw from raw GITM output — those are loaded as-is
+from the `.npy` files below):
+
+```
+/Volumes/ExtremePro/GITMSAMI_20241010_compass_grid/data/tecall_lon_576.npy
+/Volumes/ExtremePro/GITMSAMI_20241010_compass_grid/data/Eeastall_lon_576.npy
+/Volumes/ExtremePro/GITMSAMI_20241010_compass_grid/data/rhoall_lon_576.npy
+/Volumes/ExtremePro/GITMSAMI_20241010_compass_grid/data/vinwmeri_lon_576.npy
+/Volumes/ExtremePro/GITMSAMI_20241010_compass_grid/data/vinwzonal_lon_576.npy
+```
+
+Each is shape `(576, 180, 90)` = `(time, lon, lat)`. None of these files has
+a saved companion `lon`/`lat`/timestamp array anywhere in the codebase, so
+the script reconstructs all three from first principles (see the script's
+own module docstring for the full reasoning and the `ls`-count verification
+behind it):
+
+1. `lon`: 180 points at 2° spacing, `[1, 3, ..., 359]`, and `lat`: 90 points
+   at 2° spacing, `[-89, -87, ..., 89]` — confirmed by running
+   `GITM_functions.load_gitm()` once against a raw `3DALL_*.bin` file
+   (needs the `spacepy` Python at `/Users/yulupeng/anaconda3/bin/python3`,
+   only for that one verification call, not for this script itself).
+2. `timesall`: the generating notebook cell built its file list as
+   `glob('3DALL_t241010*.bin') + glob('3DALL_t241011*.bin')` (each sorted),
+   i.e. exactly all of 2024-10-10 (288 files, 5-min cadence) followed by all
+   of 2024-10-11 (288 files) — verified by `ls` counts on the source drive
+   (288 + 288 = 576, matching the arrays' first dimension exactly). Since
+   day 2 starts exactly 5 minutes after day 1 ends, the whole 576-step axis
+   is one uniform 5-minute series starting 2024-10-10 00:00:00 UT.
+3. Slices that axis down to a window covering Step 0's fixed display range
+   plus margin (2024-10-10 11:40 – 2024-10-11 06:25 UT — comfortably covers
+   every traced snapshot's ±2h backward reach, verified against `data.js`'s
+   actual `nSteps`/`timeLabels`), then downsamples 2× in time (10-min
+   cadence) and 2× in longitude (4° resolution); latitude is kept at full
+   2° resolution since it's Step 2.2's plotted vertical axis.
+4. Casts each variable to `float32` and base64-encodes the raw bytes,
+   writing everything as one `const BACKGROUND_DATA = {...};` statement to
+   `background_data.js` (~23 MB — each variable's raw grid would be ~75 MB
+   at full resolution/precision, so this downsampling is what keeps the file
+   a reasonable size to commit).
+
+Color-scale defaults (`vmin`/`vmax`/`cmap` per variable) were chosen from
+the actual data's min/max/2nd-98th-percentile range over the extracted
+window (printed by the script) — edit the `VARS` dict at the top of the
+script and rerun to change them, or to extend/shrink the time window or
+downsampling factors (`WINDOW_START`/`WINDOW_END`/`TIME_STEP`/`LON_STEP`).
 
 ### `omni_data.js`
 
@@ -317,7 +431,21 @@ Your browser
 ```
 
 Only the top of this chain does real ionospheric physics. Everything below
-`data.js` is pure presentation.
+`data.js` is pure presentation. Step 2.2's background fields follow the same
+pattern, from a separate (unrelated) precomputed source instead:
+
+```
+GITM_tad_keogram.ipynb                  (historical — not part of this folder)
+  load_gitm() looped over 3DALL_*.bin  → per-timestep TEC / E-east / Rho / Vi-nw fields
+        ↓ (np.save)
+tecall_lon_576.npy, Eeastall_lon_576.npy, rhoall_lon_576.npy,
+vinwmeri_lon_576.npy, vinwzonal_lon_576.npy
+  on /Volumes/ExtremePro/GITMSAMI_20241010_compass_grid/data/
+        ↓ (read + window + downsample + base64, extract_background_data.py)
+ionosphere_panel/background_data.js     (static, frozen snapshot)
+        ↓ (decode + nearest-neighbor match + draw, app.js)
+Your browser
+```
 
 ## Known quirks / deliberate simplifications
 
@@ -363,6 +491,22 @@ Only the top of this chain does real ionospheric physics. Everything below
   this is a simplification vs. the notebook's `numpy.ma` masking, which
   would leave NaN cells blank instead of black. In practice this rarely
   matters since missing values are uncommon in the source data.
+- **Step 2.2's background fields are downsampled** (10-min cadence instead
+  of 5-min, 4° longitude instead of 2°; latitude stays full-resolution) to
+  keep `background_data.js` a reasonable size — see
+  `extract_background_data.py` above. This means its nearest-neighbor time
+  match can be off by up to ±5 minutes from what the original Python
+  functions (run against the full-resolution arrays) would pick.
+- **Step 2.2 reuses Step 2.1's parcel selection** (`contourHighlight`)
+  rather than having its own chip row — the "Period check" panel always
+  shows one row per parcel currently selected in Step 2.1, at whichever
+  snapshot the top time-bar is on.
+- **Step 2.2's left-panel curtain columns are spaced by the parcel's own
+  (possibly non-monotonic, occasionally runaway) trajectory longitude**,
+  the same as the source notebook's `pcolormesh(shading='nearest')` — a
+  parcel with unwrapped/runaway longitude (see the map quirk above) can
+  produce a visually distorted column near that point, clipped the same
+  way the trajectory line itself is.
 
 ## Extending this
 
@@ -381,3 +525,7 @@ Only the top of this chain does real ionospheric physics. Everything below
 | Change how/where the log is saved (e.g. save to a file instead of `localStorage`) | This needs a running backend server, not just an `app.js` change — see the "kitchen behind the website" conversation about that trade-off before starting |
 | Add another Step 0 row (e.g. Bz, solar wind speed/density) | Add the field to the `payload` dict in `extract_omni_data.py`'s `main()`, rerun it, then add a matching entry to `OMNI_ROWS` in `app.js` |
 | Change the Step 0 time window (currently 2024-10-10 12:00 – 2024-10-11 06:00 UT) | Edit `WINDOW_START`/`WINDOW_END` in `extract_omni_data.py` and rerun it |
+| Add another Step 2.2 background variable | Add a `np.load(...)` entry to `VARS` in `extract_background_data.py` and rerun it, then add a matching `<option>` to `#periodCheckVarSelect` in `index.html` (the `value` must match the `VARS` key) |
+| Change a Step 2.2 background variable's color scale/colormap | Edit that entry's `cmap`/`vmin`/`vmax` in `VARS` in `extract_background_data.py` and rerun — printed min/max/2nd-98th-percentile stats can guide the new range |
+| Change Step 2.2's background time/lon/lat window or resolution | Edit `WINDOW_START`/`WINDOW_END`/`TIME_STEP`/`LON_STEP`/`LAT_STEP` in `extract_background_data.py` and rerun (watch `background_data.js`'s resulting size — see the file-by-file section above) |
+| Give Step 2.2 its own parcel selector instead of reusing Step 2.1's | Add a fourth independent highlight set (`state.periodCheckHighlight`) plus its own chip row/sync buttons in `index.html` + `app.js`, mirroring `contourHighlight`'s pattern, and swap `renderPeriodCheck()`'s parcel source over to it |

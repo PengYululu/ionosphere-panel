@@ -20,6 +20,30 @@
   // used for NmF2 elsewhere on this page
   const CONTOUR_CFG = { vmin: 0, vmax: 15, scale: 1e11, label: 'nₑ (×10^11 m^-3)' };
 
+  // Step 2.2's background fields (from background_data.js / BACKGROUND_DATA):
+  // decode each variable's base64 Float32 blob once into a typed array, row
+  // major [time][lon][lat] (see extract_background_data.py). BG mirrors
+  // BACKGROUND_DATA but with `vars[key].data` as a real Float32Array.
+  const BG = (function () {
+    if (typeof BACKGROUND_DATA === 'undefined') return null;
+    const vars = {};
+    for (const key in BACKGROUND_DATA.vars) {
+      const cfg = BACKGROUND_DATA.vars[key];
+      const bin = atob(cfg.dataB64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      vars[key] = {
+        label: cfg.label, cmap: cfg.cmap, vmin: cfg.vmin, vmax: cfg.vmax,
+        scale: cfg.scale, data: new Float32Array(bytes.buffer),
+      };
+    }
+    return {
+      nTime: BACKGROUND_DATA.nTime, nLon: BACKGROUND_DATA.nLon, nLat: BACKGROUND_DATA.nLat,
+      lonDeg: BACKGROUND_DATA.lonDeg, latDeg: BACKGROUND_DATA.latDeg,
+      timesMs: BACKGROUND_DATA.timesMs, vars,
+    };
+  })();
+
   const state = {
     snapIdx: 12,
     hemisphere: 'N',
@@ -27,6 +51,7 @@
     mapHighlight: new Set(),
     profileHighlight: new Set(),
     contourHighlight: new Set(),
+    backgroundVar: 'TEC',
     logRows: [],
     editingLogIdx: null, // index into logRows currently loaded for editing, or null
   };
@@ -62,6 +87,28 @@
     const g = clamp(1.5 - Math.abs(4 * t - 2), 0, 1);
     const b = clamp(1.5 - Math.abs(4 * t - 1), 0, 1);
     return `rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)})`;
+  }
+
+  // diverging blue-white-red colormap, t in [-1, 1] (matplotlib 'bwr')
+  function bwrColor(t) {
+    t = clamp(t, -1, 1);
+    if (t < 0) {
+      const f = 1 + t;
+      return `rgb(${Math.round(255 * f)},${Math.round(255 * f)},255)`;
+    }
+    const f = 1 - t;
+    return `rgb(255,${Math.round(255 * f)},${Math.round(255 * f)})`;
+  }
+
+  // shared value->color mapping for a {vmin,vmax,cmap} config (cmap defaults
+  // to the 'jet' scale used everywhere else on this page if unset)
+  function colorForValue(v, cfg) {
+    if (v == null || !isFinite(v)) return '#000000';
+    if (cfg.cmap === 'bwr') {
+      const mid = (cfg.vmin + cfg.vmax) / 2, half = (cfg.vmax - cfg.vmin) / 2;
+      return bwrColor(half === 0 ? 0 : (v - mid) / half);
+    }
+    return jetColor((v - cfg.vmin) / (cfg.vmax - cfg.vmin));
   }
 
   function paletteColor(idx) {
@@ -131,6 +178,10 @@
   const contourChips = document.getElementById('contourChips');
   const contourTrack = document.getElementById('contourTrack');
   const contourLegendSvg = document.getElementById('contourLegendSvg');
+  const periodCheckVarSelect = document.getElementById('periodCheckVarSelect');
+  const periodCheckTrack = document.getElementById('periodCheckTrack');
+  const periodCheckBgLegendSvg = document.getElementById('periodCheckBgLegendSvg');
+  const periodCheckNeLegendSvg = document.getElementById('periodCheckNeLegendSvg');
   const logSnapshotReadout = document.getElementById('logSnapshotReadout');
   const logRegionInputs = document.getElementById('logRegionInputs');
   const logTableHeadRow = document.getElementById('logTableHeadRow');
@@ -178,6 +229,102 @@
     const hour = parseInt(snap.tag.slice(5, 7), 10);
     const minute = parseInt(snap.tag.slice(7, 9), 10);
     return Date.UTC(2024, month - 1, day, hour, minute, 0);
+  }
+
+  // epoch ms for one traced step of a snapshot, from snap.timeLabels[s]
+  // ("HH:MM", same calendar day as the snapshot's own t0, or "MM/DD HH:MM"
+  // for the handful of steps whose backward trace crosses into the previous
+  // day — see extract_data.py's time_labels construction)
+  function stepTimeMs(snap, s) {
+    const label = snap.timeLabels[s];
+    if (!label) return null;
+    if (label.indexOf('/') >= 0) {
+      const mm = parseInt(label.slice(0, 2), 10);
+      const dd = parseInt(label.slice(3, 5), 10);
+      const hh = parseInt(label.slice(6, 8), 10);
+      const mi = parseInt(label.slice(9, 11), 10);
+      return Date.UTC(2024, mm - 1, dd, hh, mi, 0);
+    }
+    const month = parseInt(snap.tag.slice(0, 2), 10);
+    const day = parseInt(snap.tag.slice(2, 4), 10);
+    const hh = parseInt(label.slice(0, 2), 10);
+    const mi = parseInt(label.slice(3, 5), 10);
+    return Date.UTC(2024, month - 1, day, hh, mi, 0);
+  }
+
+  // ---------- background field lookups (Step 2.2) ----------
+
+  function nearestTimeIdx(timesMs, tMs) {
+    let lo = 0, hi = timesMs.length - 1;
+    if (tMs <= timesMs[0]) return 0;
+    if (tMs >= timesMs[hi]) return hi;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (timesMs[mid] <= tMs) lo = mid; else hi = mid;
+    }
+    return (tMs - timesMs[lo] <= timesMs[hi] - tMs) ? lo : hi;
+  }
+
+  function nearestLonIdx(lonDeg, lonVal) {
+    const target = ((lonVal % 360) + 360) % 360;
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < lonDeg.length; i++) {
+      const d = Math.abs(((lonDeg[i] - target + 180) % 360 + 360) % 360 - 180);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  function nearestLatIdx(latDeg, latVal) {
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < latDeg.length; i++) {
+      const d = Math.abs(latDeg[i] - latVal);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  // full latitude strip at each trajectory step (nearest bg time + lon),
+  // skipping steps with no trajectory fix — mirrors
+  // stitch_tec_background_along_trajectory()
+  function stitchBackgroundAlongTrajectory(trajLons, trajTimesMs, bgVar) {
+    const n = trajLons.length;
+    const out = new Array(n).fill(null);
+    for (let j = 0; j < n; j++) {
+      if (trajLons[j] == null || trajTimesMs[j] == null) continue;
+      const it = nearestTimeIdx(BG.timesMs, trajTimesMs[j]);
+      const il = nearestLonIdx(BG.lonDeg, trajLons[j]);
+      const base = (it * BG.nLon + il) * BG.nLat;
+      out[j] = { lon: trajLons[j], strip: bgVar.data.subarray(base, base + BG.nLat) };
+    }
+    return out;
+  }
+
+  // point value at the parcel's own (lon, lat) at each trajectory step —
+  // mirrors sample_tec_percent_along_trajectory()
+  function sampleBackgroundAlongTrajectory(trajLons, trajLats, trajTimesMs, bgVar) {
+    const n = trajLons.length;
+    const out = new Array(n).fill(null);
+    for (let j = 0; j < n; j++) {
+      if (trajLons[j] == null || trajLats[j] == null || trajTimesMs[j] == null) continue;
+      const it = nearestTimeIdx(BG.timesMs, trajTimesMs[j]);
+      const il = nearestLonIdx(BG.lonDeg, trajLons[j]);
+      const ilat = nearestLatIdx(BG.latDeg, trajLats[j]);
+      out[j] = bgVar.data[(it * BG.nLon + il) * BG.nLat + ilat];
+    }
+    return out;
+  }
+
+  // reconstruct cell edges from an array of (possibly non-monotonic) sample
+  // midpoints — same algebra as altEdgesFromMid below, reused for lon/lat
+  function midpointEdges(arr) {
+    const n = arr.length;
+    if (n === 1) return [arr[0] - 1, arr[0] + 1];
+    const edges = new Array(n + 1);
+    edges[0] = arr[0] - (arr[1] - arr[0]) / 2;
+    for (let i = 1; i < n; i++) edges[i] = (arr[i - 1] + arr[i]) / 2;
+    edges[n] = arr[n - 1] + (arr[n - 1] - arr[n - 2]) / 2;
+    return edges;
   }
 
   // round-hour ticks at a fixed step (e.g. every 3h), aligned to UTC epoch
@@ -482,7 +629,8 @@
     const grad = el('defs');
     const lg = el('linearGradient', { id: gradId, x1: '0', y1: '1', x2: '0', y2: '0' });
     for (let i = 0; i <= 10; i++) {
-      lg.appendChild(el('stop', { offset: (i * 10) + '%', 'stop-color': jetColor(i / 10) }));
+      const v = cfg.vmin + (i / 10) * (cfg.vmax - cfg.vmin);
+      lg.appendChild(el('stop', { offset: (i * 10) + '%', 'stop-color': colorForValue(v, cfg) }));
     }
     grad.appendChild(lg);
     svgEl.appendChild(grad);
@@ -495,7 +643,9 @@
       const y = barY + barH - frac * barH;
       g.appendChild(el('line', { x1: barX + barW, x2: barX + barW + 5, y1: y, y2: y, stroke: '#8ea0bd' }));
       const t = el('text', { x: barX + barW + 8, y: y + 3 });
-      t.textContent = tv.toFixed(0);
+      const span = cfg.vmax - cfg.vmin;
+      const decimals = span < 1 ? 3 : (span < 10 ? 1 : 0);
+      t.textContent = tv.toFixed(decimals);
       g.appendChild(t);
     });
     svgEl.appendChild(g);
@@ -648,20 +798,9 @@
     return edges;
   }
 
-  function renderContours() {
-    const snap = SNAPS[state.snapIdx];
-    contourTrack.innerHTML = '';
-    drawColorLegend(contourLegendSvg, CONTOUR_CFG, 'contourLegendGrad');
-
-    const parcels = Array.from(state.contourHighlight).filter((k) => k < snap.nParcels);
-    if (parcels.length === 0) {
-      const note = document.createElement('div');
-      note.className = 'empty-note';
-      note.textContent = 'Select one or more parcels above to plot their density time-height contour.';
-      contourTrack.appendChild(note);
-      return;
-    }
-
+  // shared per-snapshot geometry for the ne time-height contour, used by
+  // both Step 2.1 (renderContours) and Step 2.2's bottom-right panel
+  function computeContourLayout(snap) {
     const nSteps = snap.nSteps;
     const altArr = snap.altMidKm;
     const altEdges = altEdgesFromMid(altArr);
@@ -677,6 +816,108 @@
     const xS = linScale([xEdges[0], xEdges[nSteps]], [m.l, m.l + pw]);
     const yS = linScale([altEdges[0], altEdges[altEdges.length - 1]], [m.t + ph, m.t]);
 
+    return { nSteps, altArr, altEdges, altTicks, colW, m, pw, ph, W, H, xEdges, xS, yS };
+  }
+
+  // one parcel's ne time-height contour SVG, given a layout from
+  // computeContourLayout() (shared scales across all parcels of one snap)
+  function buildContourSvg(snap, k, layout) {
+    const { nSteps, altArr, altEdges, altTicks, m, pw, ph, W, H, xEdges, xS, yS } = layout;
+    const svg = el('svg', { width: W, height: H });
+
+    // density cells, masked black outside [bottom_height, top_height]
+    const cellsG = el('g');
+    svg.appendChild(cellsG);
+    for (let s = 0; s < nSteps; s++) {
+      const top = snap.topHeight ? snap.topHeight[s][k] : null;
+      const bot = snap.bottomHeight ? snap.bottomHeight[s][k] : null;
+      const x0 = xS(xEdges[s]), x1 = xS(xEdges[s + 1]);
+      for (let a = 0; a < altArr.length; a++) {
+        const av = altArr[a];
+        const masked = (top != null && av > top) || (bot != null && av < bot);
+        const v = snap.neProfile[s][a][k];
+        let fill;
+        if (masked || v == null) {
+          fill = '#000000';
+        } else {
+          const t = clamp((v / CONTOUR_CFG.scale - CONTOUR_CFG.vmin) / (CONTOUR_CFG.vmax - CONTOUR_CFG.vmin), 0, 1);
+          fill = jetColor(t);
+        }
+        const y0 = yS(altEdges[a + 1]), y1 = yS(altEdges[a]);
+        cellsG.appendChild(el('rect', {
+          x: x0, y: y0, width: x1 - x0, height: y1 - y0, fill, stroke: 'none',
+        }));
+      }
+    }
+
+    // hmF2(t) overlay
+    if (snap.hmF2) {
+      const pts = [];
+      for (let s = 0; s < nSteps; s++) {
+        const hm = snap.hmF2[s][k];
+        if (hm == null) continue;
+        pts.push(`${xS(s)},${yS(hm)}`);
+      }
+      if (pts.length > 1) {
+        svg.appendChild(el('polyline', {
+          points: pts.join(' '), fill: 'none', stroke: '#000000', 'stroke-width': 1.8,
+          'stroke-dasharray': '3,2', opacity: 0.9,
+        }));
+      }
+    }
+
+    // altitude (y) axis
+    const yAxisG = el('g', { class: 'axis' });
+    altTicks.forEach((av) => {
+      yAxisG.appendChild(el('line', { x1: m.l - 6, x2: m.l, y1: yS(av), y2: yS(av), stroke: '#8ea0bd' }));
+      const t = el('text', { x: m.l - 9, y: yS(av) + 3, 'text-anchor': 'end' });
+      t.textContent = av.toFixed(0);
+      yAxisG.appendChild(t);
+    });
+    svg.appendChild(yAxisG);
+    const yLabel = el('text', {
+      x: -(m.t + ph / 2), y: 12, 'text-anchor': 'middle', transform: 'rotate(-90)',
+    });
+    yLabel.style.fill = '#8ea0bd'; yLabel.style.fontSize = '10px';
+    yLabel.textContent = 'Altitude (km)';
+    svg.appendChild(yLabel);
+
+    // time (x) axis — rotated labels, one per traced step
+    const xAxisG = el('g', { class: 'axis' });
+    for (let s = 0; s < nSteps; s++) {
+      const txt = el('text', {
+        'text-anchor': 'end',
+        transform: `translate(${xS(s)},${m.t + ph + 8}) rotate(-90)`,
+      });
+      txt.style.fontSize = '7px';
+      txt.textContent = snap.timeLabels[s] || ('t' + s);
+      xAxisG.appendChild(txt);
+    }
+    svg.appendChild(xAxisG);
+    const xLabel = el('text', { x: m.l + pw / 2, y: H - 4, 'text-anchor': 'middle' });
+    xLabel.style.fill = '#8ea0bd'; xLabel.style.fontSize = '10px';
+    xLabel.textContent = 'Time (UT, backward from t0)';
+    svg.appendChild(xLabel);
+
+    svg.appendChild(el('rect', { x: m.l, y: m.t, width: pw, height: ph, fill: 'none', stroke: '#26364f' }));
+    return svg;
+  }
+
+  function renderContours() {
+    const snap = SNAPS[state.snapIdx];
+    contourTrack.innerHTML = '';
+    drawColorLegend(contourLegendSvg, CONTOUR_CFG, 'contourLegendGrad');
+
+    const parcels = Array.from(state.contourHighlight).filter((k) => k < snap.nParcels);
+    if (parcels.length === 0) {
+      const note = document.createElement('div');
+      note.className = 'empty-note';
+      note.textContent = 'Select one or more parcels above to plot their density time-height contour.';
+      contourTrack.appendChild(note);
+      return;
+    }
+
+    const layout = computeContourLayout(snap);
     parcels.forEach((k) => {
       const wrap = document.createElement('div');
       wrap.className = 'contour-step';
@@ -685,86 +926,259 @@
       title.textContent = '● Parcel #' + k;
       title.style.color = paletteColor(k);
       wrap.appendChild(title);
-
-      const svg = el('svg', { width: W, height: H });
-
-      // density cells, masked black outside [bottom_height, top_height]
-      const cellsG = el('g');
-      svg.appendChild(cellsG);
-      for (let s = 0; s < nSteps; s++) {
-        const top = snap.topHeight ? snap.topHeight[s][k] : null;
-        const bot = snap.bottomHeight ? snap.bottomHeight[s][k] : null;
-        const x0 = xS(xEdges[s]), x1 = xS(xEdges[s + 1]);
-        for (let a = 0; a < altArr.length; a++) {
-          const av = altArr[a];
-          const masked = (top != null && av > top) || (bot != null && av < bot);
-          const v = snap.neProfile[s][a][k];
-          let fill;
-          if (masked || v == null) {
-            fill = '#000000';
-          } else {
-            const t = clamp((v / CONTOUR_CFG.scale - CONTOUR_CFG.vmin) / (CONTOUR_CFG.vmax - CONTOUR_CFG.vmin), 0, 1);
-            fill = jetColor(t);
-          }
-          const y0 = yS(altEdges[a + 1]), y1 = yS(altEdges[a]);
-          cellsG.appendChild(el('rect', {
-            x: x0, y: y0, width: x1 - x0, height: y1 - y0, fill, stroke: 'none',
-          }));
-        }
-      }
-
-      // hmF2(t) overlay
-      if (snap.hmF2) {
-        const pts = [];
-        for (let s = 0; s < nSteps; s++) {
-          const hm = snap.hmF2[s][k];
-          if (hm == null) continue;
-          pts.push(`${xS(s)},${yS(hm)}`);
-        }
-        if (pts.length > 1) {
-          svg.appendChild(el('polyline', {
-            points: pts.join(' '), fill: 'none', stroke: '#000000', 'stroke-width': 1.8,
-            'stroke-dasharray': '3,2', opacity: 0.9,
-          }));
-        }
-      }
-
-      // altitude (y) axis
-      const yAxisG = el('g', { class: 'axis' });
-      altTicks.forEach((av) => {
-        yAxisG.appendChild(el('line', { x1: m.l - 6, x2: m.l, y1: yS(av), y2: yS(av), stroke: '#8ea0bd' }));
-        const t = el('text', { x: m.l - 9, y: yS(av) + 3, 'text-anchor': 'end' });
-        t.textContent = av.toFixed(0);
-        yAxisG.appendChild(t);
-      });
-      svg.appendChild(yAxisG);
-      const yLabel = el('text', {
-        x: -(m.t + ph / 2), y: 12, 'text-anchor': 'middle', transform: 'rotate(-90)',
-      });
-      yLabel.style.fill = '#8ea0bd'; yLabel.style.fontSize = '10px';
-      yLabel.textContent = 'Altitude (km)';
-      svg.appendChild(yLabel);
-
-      // time (x) axis — rotated labels, one per traced step
-      const xAxisG = el('g', { class: 'axis' });
-      for (let s = 0; s < nSteps; s++) {
-        const txt = el('text', {
-          'text-anchor': 'end',
-          transform: `translate(${xS(s)},${m.t + ph + 8}) rotate(-90)`,
-        });
-        txt.style.fontSize = '7px';
-        txt.textContent = snap.timeLabels[s] || ('t' + s);
-        xAxisG.appendChild(txt);
-      }
-      svg.appendChild(xAxisG);
-      const xLabel = el('text', { x: m.l + pw / 2, y: H - 4, 'text-anchor': 'middle' });
-      xLabel.style.fill = '#8ea0bd'; xLabel.style.fontSize = '10px';
-      xLabel.textContent = 'Time (UT, backward from t0)';
-      svg.appendChild(xLabel);
-
-      svg.appendChild(el('rect', { x: m.l, y: m.t, width: pw, height: ph, fill: 'none', stroke: '#26364f' }));
-      wrap.appendChild(svg);
+      wrap.appendChild(buildContourSvg(snap, k, layout));
       contourTrack.appendChild(wrap);
+    });
+  }
+
+  // ---------- period check (Step 2.2) ----------
+
+  // one parcel's full trajectory + this snapshot's traced-step times, used
+  // by both the left map curtain and the right-panel line sample
+  function trajArraysFor(snap, k) {
+    const nSteps = snap.nSteps;
+    const lons = [], lats = [], timesMs = [];
+    for (let s = 0; s < nSteps; s++) {
+      lons.push(snap.lon[s][k]);
+      lats.push(snap.lat[s][k]);
+      timesMs.push(stepTimeMs(snap, s));
+    }
+    return { lons, lats, timesMs };
+  }
+
+  // left panel: lon-lat map for one parcel, background field stitched along
+  // its trajectory as a pcolormesh-style curtain (nearest bg time + lon per
+  // step), with the trajectory itself drawn on top colored by the map's
+  // variable (state.variable) — mirrors plot_iono_along_trace_with_background
+  function buildPeriodCheckMap(snap, k) {
+    const bgVar = BG.vars[state.backgroundVar];
+    const cfg = VAR_CONFIG[state.variable];
+    const nSteps = snap.nSteps;
+    const hemiIsNorth = state.hemisphere === 'N';
+    const ylim = hemiIsNorth ? [30, 90] : [-90, -30];
+    const lonMin = 150, lonMax = 350;
+
+    const W = 500, H = 460;
+    const m = { l: 52, r: 16, t: 14, b: 40 };
+    const pw = W - m.l - m.r, ph = H - m.t - m.b;
+    const xS = linScale([lonMin, lonMax], [m.l, m.l + pw]);
+    const yS = linScale(ylim, [m.t + ph, m.t]);
+
+    const svg = el('svg', { width: W, height: H });
+    const clipId = 'periodCheckClip' + k;
+    const defs = el('defs');
+    const clip = el('clipPath', { id: clipId });
+    clip.appendChild(el('rect', { x: m.l, y: m.t, width: pw, height: ph }));
+    defs.appendChild(clip);
+    svg.appendChild(defs);
+
+    const g = el('g');
+    svg.appendChild(g);
+
+    const gridG = el('g', { class: 'map-grid' });
+    g.appendChild(gridG);
+    const xticks = ticksAtStep(lonMin, lonMax, 10);
+    const yticks = ticksAtStep(ylim[0], ylim[1], 10);
+    xticks.forEach((xv) => gridG.appendChild(el('line', { x1: xS(xv), x2: xS(xv), y1: m.t, y2: m.t + ph })));
+    yticks.forEach((yv) => gridG.appendChild(el('line', { x1: m.l, x2: m.l + pw, y1: yS(yv), y2: yS(yv) })));
+
+    const { lons: trajLons, lats: trajLats, timesMs: trajTimesMs } = trajArraysFor(snap, k);
+
+    // background curtain: one column per traced step, full latitude strip
+    const bgG = el('g', { 'clip-path': `url(#${clipId})` });
+    g.appendChild(bgG);
+    const strips = stitchBackgroundAlongTrajectory(trajLons, trajTimesMs, bgVar);
+    const latEdges = midpointEdges(BG.latDeg);
+    const validIdx = [];
+    for (let s = 0; s < nSteps; s++) if (strips[s]) validIdx.push(s);
+    if (validIdx.length > 0) {
+      const lonEdges = midpointEdges(validIdx.map((s) => trajLons[s]));
+      validIdx.forEach((s, vi) => {
+        const x0 = xS(lonEdges[vi]), x1 = xS(lonEdges[vi + 1]);
+        const strip = strips[s].strip;
+        for (let a = 0; a < BG.nLat; a++) {
+          const y0 = yS(latEdges[a + 1]), y1 = yS(latEdges[a]);
+          const v = strip[a] / bgVar.scale;
+          bgG.appendChild(el('rect', {
+            x: Math.min(x0, x1), y: y0, width: Math.abs(x1 - x0), height: y1 - y0,
+            fill: colorForValue(v, bgVar), stroke: 'none',
+          }));
+        }
+      });
+    }
+
+    // trajectory, colored by the map's variable
+    const trajG = el('g', { 'clip-path': `url(#${clipId})` });
+    g.appendChild(trajG);
+    const dataOf = (s) => snap[cfg.key][s][k] / cfg.scale;
+    for (let s = 0; s < nSteps - 1; s++) {
+      if (trajLons[s] == null || trajLons[s + 1] == null) continue;
+      const t = ((dataOf(s) + dataOf(s + 1)) / 2 - cfg.vmin) / (cfg.vmax - cfg.vmin);
+      trajG.appendChild(el('line', {
+        x1: xS(trajLons[s]), y1: yS(trajLats[s]), x2: xS(trajLons[s + 1]), y2: yS(trajLats[s + 1]),
+        stroke: jetColor(t), 'stroke-width': 2.6, 'stroke-opacity': 0.95,
+      }));
+    }
+    if (trajLons[0] != null) {
+      trajG.appendChild(el('circle', {
+        cx: xS(trajLons[0]), cy: yS(trajLats[0]), r: 7,
+        fill: 'none', stroke: '#43e07a', 'stroke-width': 2.2,
+      }));
+    }
+    const lastIdx = nSteps - 1;
+    if (trajLons[lastIdx] != null) {
+      trajG.appendChild(el('rect', {
+        x: xS(trajLons[lastIdx]) - 5, y: yS(trajLats[lastIdx]) - 5, width: 10, height: 10,
+        transform: `rotate(45 ${xS(trajLons[lastIdx])} ${yS(trajLats[lastIdx])})`,
+        fill: 'none', stroke: '#ff3fd4', 'stroke-width': 2,
+      }));
+    }
+
+    // axes
+    const axisG = el('g', { class: 'axis' });
+    g.appendChild(axisG);
+    xticks.forEach((xv) => {
+      const t = el('text', { x: xS(xv), y: m.t + ph + 16, 'text-anchor': 'middle' });
+      t.textContent = xv.toFixed(0);
+      axisG.appendChild(t);
+    });
+    yticks.forEach((yv) => {
+      const t = el('text', { x: m.l - 8, y: yS(yv) + 3, 'text-anchor': 'end' });
+      t.textContent = yv.toFixed(0);
+      axisG.appendChild(t);
+    });
+    const xl = el('text', { x: m.l + pw / 2, y: H - 6, 'text-anchor': 'middle' });
+    xl.style.fill = '#8ea0bd'; xl.style.fontSize = '11px';
+    xl.textContent = 'Longitude (°E)';
+    g.appendChild(xl);
+    const ylabel = el('text', { x: -(m.t + ph / 2), y: 14, 'text-anchor': 'middle', transform: 'rotate(-90)' });
+    ylabel.style.fill = '#8ea0bd'; ylabel.style.fontSize = '11px';
+    ylabel.textContent = 'Latitude (°N)';
+    g.appendChild(ylabel);
+
+    g.appendChild(el('rect', { x: m.l, y: m.t, width: pw, height: ph, fill: 'none', stroke: '#26364f' }));
+    return svg;
+  }
+
+  // right panel, top half: the background variable sampled at the parcel's
+  // own (lon, lat) at each traced step — mirrors the top axes of
+  // plot_background_and_ne_along_trace. `layout` (from computeContourLayout)
+  // is reused so this shares the x-axis pixel positions with the ne contour
+  // drawn directly below it.
+  function buildPeriodCheckLinePanel(snap, k, layout, bgVar) {
+    const { nSteps, m, pw } = layout;
+    const H = 110;
+    const t0 = 12, b0 = 16;
+    const ph = H - t0 - b0;
+    const xS = linScale([-0.5, nSteps - 0.5], [m.l, m.l + pw]);
+
+    const { lons: trajLons, lats: trajLats, timesMs: trajTimesMs } = trajArraysFor(snap, k);
+    const raw = sampleBackgroundAlongTrajectory(trajLons, trajLats, trajTimesMs, bgVar);
+    const values = raw.map((v) => (v == null ? null : v / bgVar.scale));
+    const finite = values.filter((v) => v != null);
+
+    let vmin, vmax;
+    if (finite.length) {
+      vmin = Math.min(...finite); vmax = Math.max(...finite);
+      if (vmin === vmax) { vmin -= 1; vmax += 1; }
+      const pad = (vmax - vmin) * 0.15 || 1;
+      vmin -= pad; vmax += pad;
+    } else { vmin = 0; vmax = 1; }
+    const yS = linScale([vmin, vmax], [t0 + ph, t0]);
+
+    const svg = el('svg', { width: m.l + pw + m.r, height: H });
+
+    if (vmin < 0 && vmax > 0) {
+      svg.appendChild(el('line', {
+        x1: m.l, x2: m.l + pw, y1: yS(0), y2: yS(0),
+        stroke: '#5a6c88', 'stroke-width': 1, 'stroke-dasharray': '3,2',
+      }));
+    }
+
+    const pts = [];
+    for (let s = 0; s < nSteps; s++) {
+      if (values[s] == null) continue;
+      pts.push([xS(s), yS(values[s])]);
+    }
+    if (pts.length > 1) {
+      svg.appendChild(el('polyline', {
+        points: pts.map((p) => p.join(',')).join(' '), fill: 'none',
+        stroke: '#ff6b6b', 'stroke-width': 1.8,
+      }));
+    }
+    pts.forEach(([x, y]) => svg.appendChild(el('circle', { cx: x, cy: y, r: 2.2, fill: '#ff6b6b' })));
+
+    const axisG = el('g', { class: 'axis' });
+    niceTicks(vmin, vmax, 3).forEach((yv) => {
+      const y = yS(yv);
+      axisG.appendChild(el('line', { x1: m.l - 4, x2: m.l, y1: y, y2: y, stroke: '#8ea0bd' }));
+      const t = el('text', { x: m.l - 7, y: y + 3, 'text-anchor': 'end' });
+      t.textContent = yv.toFixed(Math.abs(vmax - vmin) < 1 ? 2 : 0);
+      axisG.appendChild(t);
+    });
+    svg.appendChild(axisG);
+
+    const label = el('text', { x: m.l, y: 10, 'text-anchor': 'start' });
+    label.style.fill = '#8ea0bd'; label.style.fontSize = '10px';
+    label.textContent = bgVar.label + ' at parcel #' + k;
+    svg.appendChild(label);
+
+    svg.appendChild(el('rect', { x: m.l, y: t0, width: pw, height: ph, fill: 'none', stroke: '#26364f' }));
+    return svg;
+  }
+
+  function renderPeriodCheck() {
+    const snap = SNAPS[state.snapIdx];
+    periodCheckTrack.innerHTML = '';
+
+    if (!BG) {
+      const note = document.createElement('div');
+      note.className = 'empty-note';
+      note.textContent = 'background_data.js failed to load — Step 2.2 needs it alongside data.js.';
+      periodCheckTrack.appendChild(note);
+      return;
+    }
+
+    const parcels = Array.from(state.contourHighlight).filter((k) => k < snap.nParcels);
+    if (parcels.length === 0) {
+      const note = document.createElement('div');
+      note.className = 'empty-note';
+      note.textContent = 'Select one or more parcels in Step 2.1 above to run the period check.';
+      periodCheckTrack.appendChild(note);
+      return;
+    }
+
+    const bgVar = BG.vars[state.backgroundVar];
+    drawColorLegend(periodCheckBgLegendSvg, bgVar, 'periodCheckBgGrad');
+    drawColorLegend(periodCheckNeLegendSvg, CONTOUR_CFG, 'periodCheckNeGrad');
+
+    const layout = computeContourLayout(snap);
+    const varCfg = VAR_CONFIG[state.variable];
+
+    parcels.forEach((k) => {
+      const row = document.createElement('div');
+      row.className = 'period-check-row';
+
+      const left = document.createElement('div');
+      left.className = 'period-check-left';
+      const leftTitle = document.createElement('div');
+      leftTitle.className = 'period-check-title';
+      leftTitle.innerHTML = `<span style="color:${paletteColor(k)}">●</span> Parcel #${k} — ${varCfg.label} trajectory over ${bgVar.label}`;
+      left.appendChild(leftTitle);
+      left.appendChild(buildPeriodCheckMap(snap, k));
+      row.appendChild(left);
+
+      const right = document.createElement('div');
+      right.className = 'period-check-right';
+      const rightTitle = document.createElement('div');
+      rightTitle.className = 'period-check-title';
+      rightTitle.textContent = bgVar.label + ' at parcel, and nₑ time–height contour';
+      right.appendChild(rightTitle);
+      right.appendChild(buildPeriodCheckLinePanel(snap, k, layout, bgVar));
+      right.appendChild(buildContourSvg(snap, k, layout));
+      row.appendChild(right);
+
+      periodCheckTrack.appendChild(row);
     });
   }
 
@@ -984,6 +1398,7 @@
     renderChipRow(contourChips, snap.nParcels, state.contourHighlight, null, () => {
       refreshContourChips();
       renderContours();
+      renderPeriodCheck();
     });
   }
 
@@ -1003,6 +1418,7 @@
     renderMap();
     renderProfiles();
     renderContours();
+    renderPeriodCheck();
   }
 
   // ---------- events ----------
@@ -1033,6 +1449,7 @@
   varSelect.addEventListener('change', () => {
     state.variable = varSelect.value;
     renderMap();
+    renderPeriodCheck();
   });
 
   document.getElementById('mapSelectAll').addEventListener('click', () => {
@@ -1059,6 +1476,10 @@
   document.getElementById('contourClear').addEventListener('click', () => {
     state.contourHighlight.clear();
     renderEverything();
+  });
+  periodCheckVarSelect.addEventListener('change', () => {
+    state.backgroundVar = periodCheckVarSelect.value;
+    renderPeriodCheck();
   });
 
   function addLogRowFromInput() {
