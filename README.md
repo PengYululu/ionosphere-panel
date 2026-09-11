@@ -313,6 +313,13 @@ behind it):
    (288 + 288 = 576, matching the arrays' first dimension exactly). Since
    day 2 starts exactly 5 minutes after day 1 ends, the whole 576-step axis
    is one uniform 5-minute series starting 2024-10-10 00:00:00 UT.
+   **`T0`/`WINDOW_START`/`WINDOW_END` must stay timezone-aware (UTC)** — an
+   earlier version used naive `datetime`s, and Python silently interprets a
+   naive datetime's `.timestamp()` as local time, which shifted every
+   `background_data.js` timestamp by this machine's UTC offset (4h, EDT)
+   relative to `app.js`'s `Date.UTC()`-based times, so Step 2.2 matched the
+   wrong background time slice by 4 hours. Fixed, but worth remembering if
+   this script is ever edited again.
 3. Slices that axis down to a window covering Step 0's fixed display range
    plus margin (2024-10-10 11:40 – 2024-10-11 06:25 UT — comfortably covers
    every traced snapshot's ±2h backward reach, verified against `data.js`'s
