@@ -20,6 +20,11 @@
   // used for NmF2 elsewhere on this page
   const CONTOUR_CFG = { vmin: 0, vmax: 15, scale: 1e11, label: 'nₑ (×10^11 m^-3)' };
 
+  // Step 2.2's trajectory color is always NmF2 (not tied to Step 1's map
+  // variable selector), on the same 0-15 ×10^11 m^-3 scale as the nₑ
+  // contour panel next to it, so one legend covers both
+  const TRAJ_CFG = { vmin: CONTOUR_CFG.vmin, vmax: CONTOUR_CFG.vmax, scale: CONTOUR_CFG.scale, label: 'NmF2 (×10^11 m^-3)' };
+
   // Step 2.2's background fields (from background_data.js / BACKGROUND_DATA):
   // decode each variable's base64 Float32 blob once into a typed array, row
   // major [time][lon][lat] (see extract_background_data.py). BG mirrors
@@ -52,6 +57,7 @@
     profileHighlight: new Set(),
     contourHighlight: new Set(),
     backgroundVar: 'TEC',
+    backgroundRangeOverrides: {}, // per-variable {vmin,vmax} set by the user, else BG's own default
     logRows: [],
     editingLogIdx: null, // index into logRows currently loaded for editing, or null
   };
@@ -179,6 +185,9 @@
   const contourTrack = document.getElementById('contourTrack');
   const contourLegendSvg = document.getElementById('contourLegendSvg');
   const periodCheckVarSelect = document.getElementById('periodCheckVarSelect');
+  const periodCheckVarMinInput = document.getElementById('periodCheckVarMin');
+  const periodCheckVarMaxInput = document.getElementById('periodCheckVarMax');
+  const periodCheckVarRangeReset = document.getElementById('periodCheckVarRangeReset');
   const periodCheckTrack = document.getElementById('periodCheckTrack');
   const periodCheckBgLegendSvg = document.getElementById('periodCheckBgLegendSvg');
   const periodCheckNeLegendSvg = document.getElementById('periodCheckNeLegendSvg');
@@ -948,11 +957,12 @@
 
   // left panel: lon-lat map for one parcel, background field stitched along
   // its trajectory as a pcolormesh-style curtain (nearest bg time + lon per
-  // step), with the trajectory itself drawn on top colored by the map's
-  // variable (state.variable) — mirrors plot_iono_along_trace_with_background
-  function buildPeriodCheckMap(snap, k) {
-    const bgVar = BG.vars[state.backgroundVar];
-    const cfg = VAR_CONFIG[state.variable];
+  // step), with the trajectory itself drawn on top colored by NmF2 (fixed,
+  // same scale as the nₑ contour) — mirrors plot_iono_along_trace_with_background.
+  // `bgVar` is the effective {label,cmap,vmin,vmax,scale,data} for the
+  // currently selected background variable, with any user range override
+  // already merged in (see renderPeriodCheck)
+  function buildPeriodCheckMap(snap, k, bgVar) {
     const nSteps = snap.nSteps;
     const hemiIsNorth = state.hemisphere === 'N';
     const ylim = hemiIsNorth ? [30, 90] : [-90, -30];
@@ -1007,13 +1017,13 @@
       });
     }
 
-    // trajectory, colored by the map's variable
+    // trajectory, colored by NmF2 (fixed — see TRAJ_CFG)
     const trajG = el('g', { 'clip-path': `url(#${clipId})` });
     g.appendChild(trajG);
-    const dataOf = (s) => snap[cfg.key][s][k] / cfg.scale;
+    const dataOf = (s) => snap.NmF2[s][k] / TRAJ_CFG.scale;
     for (let s = 0; s < nSteps - 1; s++) {
       if (trajLons[s] == null || trajLons[s + 1] == null) continue;
-      const t = ((dataOf(s) + dataOf(s + 1)) / 2 - cfg.vmin) / (cfg.vmax - cfg.vmin);
+      const t = ((dataOf(s) + dataOf(s + 1)) / 2 - TRAJ_CFG.vmin) / (TRAJ_CFG.vmax - TRAJ_CFG.vmin);
       trajG.appendChild(el('line', {
         x1: xS(trajLons[s]), y1: yS(trajLats[s]), x2: xS(trajLons[s + 1]), y2: yS(trajLats[s + 1]),
         stroke: jetColor(t), 'stroke-width': 2.6, 'stroke-opacity': 0.95,
@@ -1148,12 +1158,21 @@
       return;
     }
 
-    const bgVar = BG.vars[state.backgroundVar];
+    // effective background range: user override for this variable, else the
+    // default computed by extract_background_data.py — colormap/label/scale
+    // always come from BG (not user-editable, per design)
+    const bgVarRaw = BG.vars[state.backgroundVar];
+    const range = state.backgroundRangeOverrides[state.backgroundVar]
+      || { vmin: bgVarRaw.vmin, vmax: bgVarRaw.vmax };
+    const bgVar = Object.assign({}, bgVarRaw, range);
+    periodCheckVarMinInput.value = range.vmin;
+    periodCheckVarMaxInput.value = range.vmax;
+
     drawColorLegend(periodCheckBgLegendSvg, bgVar, 'periodCheckBgGrad');
-    drawColorLegend(periodCheckNeLegendSvg, CONTOUR_CFG, 'periodCheckNeGrad');
+    drawColorLegend(periodCheckNeLegendSvg,
+      Object.assign({}, CONTOUR_CFG, { label: 'nₑ / NmF2 (×10^11 m^-3)' }), 'periodCheckNeGrad');
 
     const layout = computeContourLayout(snap);
-    const varCfg = VAR_CONFIG[state.variable];
 
     parcels.forEach((k) => {
       const row = document.createElement('div');
@@ -1163,9 +1182,9 @@
       left.className = 'period-check-left';
       const leftTitle = document.createElement('div');
       leftTitle.className = 'period-check-title';
-      leftTitle.innerHTML = `<span style="color:${paletteColor(k)}">●</span> Parcel #${k} — ${varCfg.label} trajectory over ${bgVar.label}`;
+      leftTitle.innerHTML = `<span style="color:${paletteColor(k)}">●</span> Parcel #${k} — ${TRAJ_CFG.label} trajectory over ${bgVar.label}`;
       left.appendChild(leftTitle);
-      left.appendChild(buildPeriodCheckMap(snap, k));
+      left.appendChild(buildPeriodCheckMap(snap, k, bgVar));
       row.appendChild(left);
 
       const right = document.createElement('div');
@@ -1449,7 +1468,6 @@
   varSelect.addEventListener('change', () => {
     state.variable = varSelect.value;
     renderMap();
-    renderPeriodCheck();
   });
 
   document.getElementById('mapSelectAll').addEventListener('click', () => {
@@ -1479,6 +1497,22 @@
   });
   periodCheckVarSelect.addEventListener('change', () => {
     state.backgroundVar = periodCheckVarSelect.value;
+    renderPeriodCheck();
+  });
+  function applyPeriodCheckRange() {
+    const vmin = parseFloat(periodCheckVarMinInput.value);
+    const vmax = parseFloat(periodCheckVarMaxInput.value);
+    if (!isFinite(vmin) || !isFinite(vmax) || vmin >= vmax) {
+      renderPeriodCheck(); // snap the inputs back to the last valid range
+      return;
+    }
+    state.backgroundRangeOverrides[state.backgroundVar] = { vmin, vmax };
+    renderPeriodCheck();
+  }
+  periodCheckVarMinInput.addEventListener('change', applyPeriodCheckRange);
+  periodCheckVarMaxInput.addEventListener('change', applyPeriodCheckRange);
+  periodCheckVarRangeReset.addEventListener('click', () => {
+    delete state.backgroundRangeOverrides[state.backgroundVar];
     renderPeriodCheck();
   });
 

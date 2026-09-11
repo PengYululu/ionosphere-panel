@@ -63,7 +63,7 @@
     color: var(--text-dim);
   }
   .control-group.grow { flex: 1; min-width: 260px; }
-  select, input[type=range], input[type=text] {
+  select, input[type=range], input[type=text], input[type=number] {
     background: var(--panel-2);
     color: var(--text);
     border: 1px solid var(--border);
@@ -72,7 +72,7 @@
     font-size: 13px;
   }
   input[type=range] { padding: 0; }
-  input[type=text] { width: 100%; font-family: inherit; }
+  input[type=text], input[type=number] { width: 100%; font-family: inherit; }
   input[type=text]::placeholder { color: var(--text-dim); }
   .time-readout {
     font-variant-numeric: tabular-nums;
@@ -375,16 +375,32 @@
 
   <div class="panel">
     <h2>Step 2.2 &middot; Period check</h2>
-    <p class="sub">For each parcel selected in Step 2.1 above, at the current snapshot: left is its trajectory (coloured by the Step 1 map variable) drawn over a background field sampled along the trace; right is that same background field sampled at the parcel's own position, stacked above its n<sub>e</sub> time&ndash;height contour (identical to Step 2.1's, sharing the same time axis).</p>
-    <div class="control-group" style="margin-bottom:12px; max-width:280px;">
-      <label for="periodCheckVarSelect">Background variable</label>
-      <select id="periodCheckVarSelect">
-        <option value="TEC">TEC</option>
-        <option value="Eeast">E-east</option>
-        <option value="Rho">Rho</option>
-        <option value="ViNWMeri">Vi-nw meridional</option>
-        <option value="ViNWZonal">Vi-nw zonal</option>
-      </select>
+    <p class="sub">For each parcel selected in Step 2.1 above, at the current snapshot: left is its trajectory (coloured by NmF2, same scale as the n<sub>e</sub> contour) drawn over a background field sampled along the trace; right is that same background field sampled at the parcel's own position, stacked above its n<sub>e</sub> time&ndash;height contour (identical to Step 2.1's, sharing the same time axis).</p>
+    <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px;">
+      <div class="control-group" style="max-width:280px;">
+        <label for="periodCheckVarSelect">Background variable</label>
+        <select id="periodCheckVarSelect">
+          <option value="TEC">TEC</option>
+          <option value="Eeast">E-east</option>
+          <option value="Rho">Rho</option>
+          <option value="ViNWMeri">Vi-nw meridional</option>
+          <option value="ViNWZonal">Vi-nw zonal</option>
+        </select>
+      </div>
+      <div class="control-group" style="max-width:110px;">
+        <label for="periodCheckVarMin">Range min</label>
+        <input type="number" id="periodCheckVarMin" step="any">
+      </div>
+      <div class="control-group" style="max-width:110px;">
+        <label for="periodCheckVarMax">Range max</label>
+        <input type="number" id="periodCheckVarMax" step="any">
+      </div>
+      <div class="control-group">
+        <label>&nbsp;</label>
+        <div class="chip-actions" style="margin-bottom:0;">
+          <button id="periodCheckVarRangeReset" type="button">Reset range</button>
+        </div>
+      </div>
     </div>
     <div id="periodCheckWrap">
       <div id="periodCheckTrack"></div>
