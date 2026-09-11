@@ -250,7 +250,7 @@ Defines one global:
 
 ```js
 const BACKGROUND_DATA = {
-  nTime: 113, nLon: 90, nLat: 90,      // downsampled grid (see below)
+  nTime: 177, nLon: 90, nLat: 90,      // native 5-min cadence, windowed+downsampled grid (see below)
   lonDeg: [...], latDeg: [...],        // degrees
   timesMs: [...],                      // epoch ms, one per time step
   vars: {
@@ -320,17 +320,24 @@ behind it):
    relative to `app.js`'s `Date.UTC()`-based times, so Step 2.2 matched the
    wrong background time slice by 4 hours. Fixed, but worth remembering if
    this script is ever edited again.
-3. Slices that axis down to a window covering Step 0's fixed display range
-   plus margin (2024-10-10 11:40 – 2024-10-11 06:25 UT — comfortably covers
-   every traced snapshot's ±2h backward reach, verified against `data.js`'s
-   actual `nSteps`/`timeLabels`), then downsamples 2× in time (10-min
-   cadence) and 2× in longitude (4° resolution); latitude is kept at full
-   2° resolution since it's Step 2.2's plotted vertical axis.
+3. Slices that axis down to a tight window covering every traced step's
+   *actual* time across all 49 snapshots (2024-10-10 13:00 – 2024-10-11
+   03:00 UT, verified directly against `data.js`'s own `timeLabels`) plus a
+   20-min margin either side, then downsamples 2× in longitude (4°
+   resolution); latitude is kept at full 2° resolution since it's Step
+   2.2's plotted vertical axis. **Time is kept at native 5-min cadence
+   (`TIME_STEP = 1`)** — a 10-min downsample was tried first and aliased
+   the short-period (TAD-scale) wiggles this whole step exists to show into
+   a visibly different, smoother curve that no longer matched the reference
+   notebook plots; the tightened time window (down from a much wider
+   Step-0-sized margin) is what keeps the file size reasonable at full
+   cadence instead.
 4. Casts each variable to `float32` and base64-encodes the raw bytes,
    writing everything as one `const BACKGROUND_DATA = {...};` statement to
-   `background_data.js` (~23 MB — each variable's raw grid would be ~75 MB
-   at full resolution/precision, so this downsampling is what keeps the file
-   a reasonable size to commit).
+   `background_data.js` (~36 MB — each variable's raw grid over the full
+   576-step/180-lon/90-lat array would be ~75 MB, so the tightened window +
+   longitude downsampling is what keeps the file a reasonable size to
+   commit at full time resolution).
 
 Color-scale defaults (`vmin`/`vmax`/`cmap` per variable) were chosen from
 the actual data's min/max/2nd-98th-percentile range over the extracted
@@ -506,12 +513,16 @@ Your browser
   this is a simplification vs. the notebook's `numpy.ma` masking, which
   would leave NaN cells blank instead of black. In practice this rarely
   matters since missing values are uncommon in the source data.
-- **Step 2.2's background fields are downsampled** (10-min cadence instead
-  of 5-min, 4° longitude instead of 2°; latitude stays full-resolution) to
-  keep `background_data.js` a reasonable size — see
-  `extract_background_data.py` above. This means its nearest-neighbor time
-  match can be off by up to ±5 minutes from what the original Python
-  functions (run against the full-resolution arrays) would pick.
+- **Step 2.2's background fields keep native 5-min time resolution, but are
+  downsampled 2× in longitude** (4° instead of 2°; latitude stays
+  full-resolution) and windowed tightly to just the times actually needed,
+  to keep `background_data.js` a reasonable size — see
+  `extract_background_data.py` above. (An earlier version also downsampled
+  time to 10-min cadence; that aliased the short-period wiggles this step
+  exists to show, so time resolution was restored to native and the window
+  tightened instead.) This means its nearest-neighbor longitude match can
+  be off by up to ±2° from what the original Python functions (run against
+  the full-resolution arrays) would pick.
 - **Step 2.2 reuses Step 2.1's parcel selection** (`contourHighlight`)
   rather than having its own chip row — the "Period check" panel always
   shows one row per parcel currently selected in Step 2.1, at whichever

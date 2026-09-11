@@ -49,17 +49,26 @@ T0 = datetime.datetime(2024, 10, 10, 0, 0, 0, tzinfo=UTC)
 CADENCE_MIN = 5
 N_TIME_FULL = 576
 
-# Window covers Step 0's fixed display range (2024-10-10 12:00 - 2024-10-11
-# 06:00 UT) plus a margin either side for parcel traces that reach slightly
-# outside it (up to ~2h backward from any traced snapshot).
-WINDOW_START = datetime.datetime(2024, 10, 10, 11, 40, 0, tzinfo=UTC)
-WINDOW_END = datetime.datetime(2024, 10, 11, 6, 25, 0, tzinfo=UTC)
+# Window covers every traced step's actual time across all 49 snapshots --
+# 2024-10-10 13:00 to 2024-10-11 03:00 UT, verified directly against
+# data.js's own timeLabels (each snapshot backward-traces at most 2h) --
+# plus a 20-min margin either side.
+WINDOW_START = datetime.datetime(2024, 10, 10, 12, 40, 0, tzinfo=UTC)
+WINDOW_END = datetime.datetime(2024, 10, 11, 3, 20, 0, tzinfo=UTC)
 
-# Downsample factors applied on top of the time window: every 2nd time step
-# (10-min cadence) and every 2nd longitude point (4-degree resolution).
-# Latitude is kept at full resolution (2 degrees) since it's the plotted
-# vertical axis in Step 2.2's left-panel curtain.
-TIME_STEP = 2
+# Downsample factors applied on top of the time window. TIME_STEP must stay
+# 1 (native 5-min cadence): this data feeds Step 2.2 "period check", whose
+# whole purpose is showing short-period (TAD-scale, ~12-120 min per the
+# notebook's own bandpass cutoffs) wiggles -- a 10-min downsample (TIME_STEP
+# = 2) was tried and aliased those wiggles into a visibly different, smoother
+# curve that no longer matched the reference notebook plots. Longitude can
+# still be downsampled 2x (4-degree resolution) without visibly distorting
+# the curtain/line-sample values (verified against the un-downsampled
+# array); latitude is kept at full resolution (2 degrees) since it's the
+# plotted vertical axis in Step 2.2's left-panel curtain. The tightened
+# WINDOW_START/END above (down from a much wider margin) is what keeps
+# background_data.js a reasonable size at TIME_STEP=1.
+TIME_STEP = 1
 LON_STEP = 2
 LAT_STEP = 1
 
