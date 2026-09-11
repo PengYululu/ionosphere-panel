@@ -250,7 +250,7 @@ Defines one global:
 
 ```js
 const BACKGROUND_DATA = {
-  nTime: 177, nLon: 90, nLat: 90,      // native 5-min cadence, windowed+downsampled grid (see below)
+  nTime: 177, nLon: 180, nLat: 90,     // full native resolution, windowed in time only (see below)
   lonDeg: [...], latDeg: [...],        // degrees
   timesMs: [...],                      // epoch ms, one per time step
   vars: {
@@ -271,9 +271,10 @@ once at startup (see `BG` in the function table above) into real
 the same display-scale convention as `VAR_CONFIG`/`CONTOUR_CFG` elsewhere
 (e.g. Rho is stored in kg/m³ but displayed ×10⁻¹¹).
 
-Like `data.js`, this is a frozen, downsampled snapshot — Step 2.2 has no
-runtime dependency on the source `.npy` files, the external drive, or
-Python.
+Like `data.js`, this is a frozen snapshot (windowed in time to just what's
+needed, but at full native lon/lat/time resolution — no downsampling) —
+Step 2.2 has no runtime dependency on the source `.npy` files, the external
+drive, or Python.
 
 ### `extract_background_data.py`
 
@@ -323,21 +324,22 @@ behind it):
 3. Slices that axis down to a tight window covering every traced step's
    *actual* time across all 49 snapshots (2024-10-10 13:00 – 2024-10-11
    03:00 UT, verified directly against `data.js`'s own `timeLabels`) plus a
-   20-min margin either side, then downsamples 2× in longitude (4°
-   resolution); latitude is kept at full 2° resolution since it's Step
-   2.2's plotted vertical axis. **Time is kept at native 5-min cadence
-   (`TIME_STEP = 1`)** — a 10-min downsample was tried first and aliased
-   the short-period (TAD-scale) wiggles this whole step exists to show into
-   a visibly different, smoother curve that no longer matched the reference
-   notebook plots; the tightened time window (down from a much wider
-   Step-0-sized margin) is what keeps the file size reasonable at full
-   cadence instead.
+   20-min margin either side. **No downsampling on any axis** — full
+   native 5-min time cadence, 2° longitude, 2° latitude
+   (`TIME_STEP = LON_STEP = LAT_STEP = 1`). A 10-min time downsample was
+   tried first and aliased the short-period (TAD-scale) wiggles this whole
+   step exists to show into a visibly different, smoother curve that no
+   longer matched the reference notebook plots; a 2× longitude downsample
+   was also tried (and didn't visibly distort values, unlike the time one)
+   but was dropped too for full fidelity. The tightened time window (down
+   from a much wider Step-0-sized margin) is what keeps the file a
+   reasonable size at full resolution.
 4. Casts each variable to `float32` and base64-encodes the raw bytes,
    writing everything as one `const BACKGROUND_DATA = {...};` statement to
-   `background_data.js` (~36 MB — each variable's raw grid over the full
-   576-step/180-lon/90-lat array would be ~75 MB, so the tightened window +
-   longitude downsampling is what keeps the file a reasonable size to
-   commit at full time resolution).
+   `background_data.js` (~73 MB, under GitHub's 100 MB hard limit but above
+   its 50 MB "large file" warning — the price of full resolution across all
+   3 axes; narrow `VARS` to fewer variables, or reintroduce a downsample
+   factor, if this becomes a problem).
 
 Color-scale defaults (`vmin`/`vmax`/`cmap` per variable) were chosen from
 the actual data's min/max/2nd-98th-percentile range over the extracted
@@ -513,16 +515,14 @@ Your browser
   this is a simplification vs. the notebook's `numpy.ma` masking, which
   would leave NaN cells blank instead of black. In practice this rarely
   matters since missing values are uncommon in the source data.
-- **Step 2.2's background fields keep native 5-min time resolution, but are
-  downsampled 2× in longitude** (4° instead of 2°; latitude stays
-  full-resolution) and windowed tightly to just the times actually needed,
-  to keep `background_data.js` a reasonable size — see
-  `extract_background_data.py` above. (An earlier version also downsampled
-  time to 10-min cadence; that aliased the short-period wiggles this step
-  exists to show, so time resolution was restored to native and the window
-  tightened instead.) This means its nearest-neighbor longitude match can
-  be off by up to ±2° from what the original Python functions (run against
-  the full-resolution arrays) would pick.
+- **Step 2.2's background fields are at full native resolution** (5-min
+  time, 2° lon, 2° lat — no downsampling on any axis) but windowed tightly
+  to just the times actually needed across all 49 snapshots, to keep
+  `background_data.js` a reasonable size (~73 MB) — see
+  `extract_background_data.py` above. (Both a 10-min time downsample and a
+  2× longitude downsample were tried first; the time one visibly aliased
+  the short-period wiggles this step exists to show, so both were dropped
+  in favor of a tighter time window instead.)
 - **Step 2.2 reuses Step 2.1's parcel selection** (`contourHighlight`)
   rather than having its own chip row — the "Period check" panel always
   shows one row per parcel currently selected in Step 2.1, at whichever
