@@ -1086,19 +1086,11 @@
     const raw = sampleBackgroundAlongTrajectory(trajLons, trajLats, trajTimesMs, bgVar);
     const values = raw.map((v) => (v == null ? null : v / bgVar.scale));
 
-    // auto-scaled range, always anchored at 0 (matching the notebook's
-    // axhline(0), which participates in matplotlib's own autoscale) and
-    // rounded to nice tick values, so real fluctuations (e.g. TEC hovering
-    // near 30) show up as clear wiggles instead of being squashed against
-    // the background color scale's own, usually much wider, range
-    const finite = values.filter((v) => v != null);
-    let vmin = 0, vmax = 1;
-    if (finite.length) {
-      const dMin = Math.min(0, ...finite), dMax = Math.max(0, ...finite);
-      const span = (dMax - dMin) || 1;
-      const ticks = niceTicks(dMin, dMax + span * 0.15, 4);
-      vmin = ticks[0]; vmax = ticks[ticks.length - 1];
-    }
+    // same range as the left panel's background color scale (bgVar.vmin/
+    // vmax — the extraction script's default, or the user's "Range min"/
+    // "Range max" override) so the two panels stay in sync: narrow the
+    // range there to see wiggles more clearly, widen it for full context
+    const vmin = bgVar.vmin, vmax = bgVar.vmax;
     const yS = linScale([vmin, vmax], [t0 + ph, t0]);
 
     const svg = el('svg', { width: m.l + pw + m.r, height: H });
