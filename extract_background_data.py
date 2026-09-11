@@ -38,15 +38,22 @@ import datetime
 SRC_DIR = '/Volumes/ExtremePro/GITMSAMI_20241010_compass_grid/data/'
 OUT_PATH = os.path.join(os.path.dirname(__file__), 'background_data.js')
 
-T0 = datetime.datetime(2024, 10, 10, 0, 0, 0)
+# All UTC (GITM output times are UT). Must stay timezone-AWARE: a naive
+# datetime's .timestamp() silently interprets it as local time and converts
+# to UTC accordingly, which shifted every value in `times_ms` below by this
+# machine's local UTC offset (4h, EDT) -- app.js's stepTimeMs()/snapTimeMs()
+# use Date.UTC() and are unaffected, so that mismatch made Step 2.2 sample
+# the background field ~4h off from the parcel's actual trace time.
+UTC = datetime.timezone.utc
+T0 = datetime.datetime(2024, 10, 10, 0, 0, 0, tzinfo=UTC)
 CADENCE_MIN = 5
 N_TIME_FULL = 576
 
 # Window covers Step 0's fixed display range (2024-10-10 12:00 - 2024-10-11
 # 06:00 UT) plus a margin either side for parcel traces that reach slightly
 # outside it (up to ~2h backward from any traced snapshot).
-WINDOW_START = datetime.datetime(2024, 10, 10, 11, 40, 0)
-WINDOW_END = datetime.datetime(2024, 10, 11, 6, 25, 0)
+WINDOW_START = datetime.datetime(2024, 10, 10, 11, 40, 0, tzinfo=UTC)
+WINDOW_END = datetime.datetime(2024, 10, 11, 6, 25, 0, tzinfo=UTC)
 
 # Downsample factors applied on top of the time window: every 2nd time step
 # (10-min cadence) and every 2nd longitude point (4-degree resolution).
