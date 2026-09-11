@@ -1085,15 +1085,12 @@
     const { lons: trajLons, lats: trajLats, timesMs: trajTimesMs } = trajArraysFor(snap, k);
     const raw = sampleBackgroundAlongTrajectory(trajLons, trajLats, trajTimesMs, bgVar);
     const values = raw.map((v) => (v == null ? null : v / bgVar.scale));
-    const finite = values.filter((v) => v != null);
 
-    let vmin, vmax;
-    if (finite.length) {
-      vmin = Math.min(...finite); vmax = Math.max(...finite);
-      if (vmin === vmax) { vmin -= 1; vmax += 1; }
-      const pad = (vmax - vmin) * 0.15 || 1;
-      vmin -= pad; vmax += pad;
-    } else { vmin = 0; vmax = 1; }
+    // fixed range — same as the background color scale (bgVar.vmin/vmax,
+    // including any user override), not auto-scaled to the sampled values,
+    // so a flat-looking line here correctly reads as "small relative to the
+    // field's full range" instead of being stretched to fill the panel
+    const vmin = bgVar.vmin, vmax = bgVar.vmax;
     const yS = linScale([vmin, vmax], [t0 + ph, t0]);
 
     const svg = el('svg', { width: m.l + pw + m.r, height: H });
