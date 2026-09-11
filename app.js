@@ -1095,11 +1095,17 @@
 
     const svg = el('svg', { width: m.l + pw + m.r, height: H });
 
-    const gridG = el('g', { class: 'grid' });
+    // white dotted grid, both axes — same style as the map's grid (Step 1)
+    // and matching, on x, the same per-step positions as the nₑ contour's
+    // time axis directly below (both share `layout`'s xS)
+    const gridG = el('g', { class: 'map-grid' });
     svg.appendChild(gridG);
     niceTicks(vmin, vmax, 4).forEach((yv) => {
       gridG.appendChild(el('line', { x1: m.l, x2: m.l + pw, y1: yS(yv), y2: yS(yv) }));
     });
+    for (let s = 0; s < nSteps; s++) {
+      gridG.appendChild(el('line', { x1: xS(s), x2: xS(s), y1: t0, y2: t0 + ph }));
+    }
 
     if (vmin < 0 && vmax > 0) {
       svg.appendChild(el('line', {
