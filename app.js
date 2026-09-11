@@ -1086,14 +1086,28 @@
     const raw = sampleBackgroundAlongTrajectory(trajLons, trajLats, trajTimesMs, bgVar);
     const values = raw.map((v) => (v == null ? null : v / bgVar.scale));
 
-    // fixed range — same as the background color scale (bgVar.vmin/vmax,
-    // including any user override), not auto-scaled to the sampled values,
-    // so a flat-looking line here correctly reads as "small relative to the
-    // field's full range" instead of being stretched to fill the panel
-    const vmin = bgVar.vmin, vmax = bgVar.vmax;
+    // auto-scaled range, always anchored at 0 (matching the notebook's
+    // axhline(0), which participates in matplotlib's own autoscale) and
+    // rounded to nice tick values, so real fluctuations (e.g. TEC hovering
+    // near 30) show up as clear wiggles instead of being squashed against
+    // the background color scale's own, usually much wider, range
+    const finite = values.filter((v) => v != null);
+    let vmin = 0, vmax = 1;
+    if (finite.length) {
+      const dMin = Math.min(0, ...finite), dMax = Math.max(0, ...finite);
+      const span = (dMax - dMin) || 1;
+      const ticks = niceTicks(dMin, dMax + span * 0.15, 4);
+      vmin = ticks[0]; vmax = ticks[ticks.length - 1];
+    }
     const yS = linScale([vmin, vmax], [t0 + ph, t0]);
 
     const svg = el('svg', { width: m.l + pw + m.r, height: H });
+
+    const gridG = el('g', { class: 'grid' });
+    svg.appendChild(gridG);
+    niceTicks(vmin, vmax, 4).forEach((yv) => {
+      gridG.appendChild(el('line', { x1: m.l, x2: m.l + pw, y1: yS(yv), y2: yS(yv) }));
+    });
 
     if (vmin < 0 && vmax > 0) {
       svg.appendChild(el('line', {
@@ -1116,7 +1130,7 @@
     pts.forEach(([x, y]) => svg.appendChild(el('circle', { cx: x, cy: y, r: 2.2, fill: '#ff6b6b' })));
 
     const axisG = el('g', { class: 'axis' });
-    niceTicks(vmin, vmax, 3).forEach((yv) => {
+    niceTicks(vmin, vmax, 4).forEach((yv) => {
       const y = yS(yv);
       axisG.appendChild(el('line', { x1: m.l - 4, x2: m.l, y1: y, y2: y, stroke: '#8ea0bd' }));
       const t = el('text', { x: m.l - 7, y: y + 3, 'text-anchor': 'end' });
